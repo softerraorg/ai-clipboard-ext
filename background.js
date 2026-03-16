@@ -91,11 +91,21 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 chrome.commands.onCommand.addListener((command) => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "polish-selected",
-        mode: command
-      });
-sage.action === "call-api") {
+      if (command === "toggle-chat") {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "toggle-chat-overlay" });
+      } else {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: "polish-selected",
+          mode: command
+        });
+      }
+    }
+  });
+});
+
+// Handle API calls from content script and popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "call-api") {
     callClaudeAPI(message.text, message.mode)
       .then(result => sendResponse({ success: true, text: result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
@@ -104,6 +114,13 @@ sage.action === "call-api") {
 
   if (message.action === "chat-api") {
     callChatAPI(message.messages)
+      .then(result => sendResponse({ success: true, text: result }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "n8n-proposal") {
+    callN8nProposalBot(message.text)
       .then(result => sendResponse({ success: true, text: result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -191,4 +208,29 @@ async function callClaudeAPI(text, mode) {
 
   const data = await response.json();
   return data.content[0].text;
+}
+// n8n Proposal Bot API
+async function callN8nProposalBot(jobDescription) {
+  const { n8nWebhookUrl } = await chrome.storage.sync.get(["n8nWebhookUrl"]);
+
+  if (!n8nWebhookUrl) {
+    throw new Error("n8n webhook URL not set. Go to Settings tab.");
+  }
+
+  const response = await fetch(n8nWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "sendMessage",
+      chatInput: jobDescription,
+      sessionId: "ext-" + Date.now()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`n8n error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.output || data.text || JSON.stringify(data);
 }
