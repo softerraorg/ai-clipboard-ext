@@ -148,6 +148,8 @@
     }
     .msg-action-btn:hover { border-color: #7c83ff; color: #fff; }
     .msg-action-btn.copied { border-color: #4ade80; color: #4ade80; }
+    .copy-proposal-btn { border-color: #f59e0b !important; color: #f59e0b !important; font-weight: 600; }
+    .copy-proposal-btn:hover { border-color: #fbbf24 !important; color: #fbbf24 !important; }
 
     .msg-loading {
       background: #12122a;
@@ -283,6 +285,22 @@
     .quick-btn:hover { border-color: #7c83ff; color: #ccc; }
     .quick-btn.n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
     .quick-btn.n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
+
+    /* Markdown rendering */
+    .md-content { white-space: normal; }
+    .md-h { font-size: 14px; font-weight: 700; color: #fff; margin: 10px 0 6px; }
+    h4.md-h { font-size: 13px; }
+    .md-code { background: #1a1a3a; border: 1px solid #2a2a4a; border-radius: 4px; padding: 1px 5px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #f59e0b; }
+    .md-hr { border: none; border-top: 1px solid #2a2a4a; margin: 10px 0; }
+    .md-li { padding-left: 14px; position: relative; margin: 2px 0; }
+    .md-li::before { content: "•"; position: absolute; left: 2px; color: #7c83ff; }
+    .md-check { padding-left: 20px; position: relative; margin: 2px 0; }
+    .md-check::before { content: "☐"; position: absolute; left: 2px; color: #666; }
+    .md-check.done::before { content: "☑"; color: #4ade80; }
+    .md-link { color: #7c83ff; text-decoration: none; word-break: break-all; }
+    .md-link:hover { text-decoration: underline; color: #9da3ff; }
+    .md-content strong { color: #fff; }
+    .md-content em { color: #ccc; font-style: italic; }
 
     /* ---- Settings & Shortcuts ---- */
     .panel-content { padding: 16px; overflow-y: auto; flex: 1; }

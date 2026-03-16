@@ -185,23 +185,38 @@ function addMessage(text, type) {
     msgDiv.className = "msg msg-user";
     msgDiv.innerHTML = `<div class="msg-label">You</div>${escapeHtml(text)}`;
   } else if (type === "ai") {
+    const hasProposal = /PROPOSAL:|Hook Options|Suggested Price|Red Flag|ADDITIONAL NOTES/i.test(text);
     msgDiv.className = "msg msg-ai";
     msgDiv.innerHTML = `
       <div class="msg-label">AI Response</div>
-      ${escapeHtml(text)}
+      <div class="md-content">${renderMarkdown(text)}</div>
       <div class="msg-actions">
-        <button class="msg-action-btn copy-btn">📋 Copy</button>
+        ${hasProposal ? '<button class="msg-action-btn copy-proposal-btn">⚡ Copy Proposal</button>' : ''}
+        <button class="msg-action-btn copy-btn">📋 Copy All</button>
         <button class="msg-action-btn retry-btn">🔄 Retry</button>
       </div>
     `;
 
-    // Copy button
+    if (hasProposal) {
+      msgDiv.querySelector(".copy-proposal-btn").addEventListener("click", function() {
+        const proposalOnly = extractProposalText(text);
+        navigator.clipboard.writeText(proposalOnly).then(() => {
+          this.textContent = "✓ Copied!";
+          this.classList.add("copied");
+          setTimeout(() => {
+            this.textContent = "⚡ Copy Proposal";
+            this.classList.remove("copied");
+          }, 2000);
+        });
+      });
+    }
+
     msgDiv.querySelector(".copy-btn").addEventListener("click", function() {
-      navigator.clipboard.writeText(text).then(() => {
+      navigator.clipboard.writeText(stripMarkdownChars(text)).then(() => {
         this.textContent = "✓ Copied!";
         this.classList.add("copied");
         setTimeout(() => {
-          this.textContent = "📋 Copy";
+          this.textContent = "📋 Copy All";
           this.classList.remove("copied");
         }, 2000);
       });
@@ -333,4 +348,70 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+function stripMarkdownChars(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
+    .replace(/`([^`]+?)`/g, '$1')
+    .replace(/^#{1,4}\s*/gm, '')
+    .replace(/^---$/gm, '')
+    .trim();
+}
+
+function extractProposalText(text) {
+  let proposal = text;
+
+  const proposalMatch = text.search(/^PROPOSAL:?\s*$/mi);
+  if (proposalMatch !== -1) {
+    proposal = proposal.substring(proposalMatch).replace(/^PROPOSAL:?\s*/i, '').trim();
+  } else {
+    const evalEnd = text.search(/^---$/m);
+    if (evalEnd !== -1) {
+      proposal = proposal.substring(evalEnd + 3).trim();
+    }
+  }
+
+  const cutPatterns = [
+    /\nADDITIONAL NOTES:?\s*$/mi,
+    /\nHook Options:?\s*$/mi,
+    /\n\*?\*?Hook Options\*?\*?:?/i,
+    /\n\*?\*?Red Flags?\*?\*?:?/i,
+    /\n\*?\*?Suggested Price/i,
+    /\n\*?\*?Why (these|those) portfolio/i,
+  ];
+
+  for (const pattern of cutPatterns) {
+    const match = proposal.search(pattern);
+    if (match !== -1) {
+      proposal = proposal.substring(0, match).trim();
+      break;
+    }
+  }
+
+  if (proposal.startsWith('---')) proposal = proposal.substring(3).trim();
+  if (proposal.endsWith('---')) proposal = proposal.substring(0, proposal.length - 3).trim();
+
+  return stripMarkdownChars(proposal);
+}
+
+function renderMarkdown(text) {
+  let html = escapeHtml(text);
+
+  html = html.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="md-h">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h3 class="md-h">$1</h3>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+?)`/g, '<code class="md-code">$1</code>');
+  html = html.replace(/^---$/gm, '<hr class="md-hr">');
+  html = html.replace(/^- \[x\] (.+)$/gm, '<div class="md-check done">$1</div>');
+  html = html.replace(/^- \[ \] (.+)$/gm, '<div class="md-check">$1</div>');
+  html = html.replace(/^- (.+)$/gm, '<div class="md-li">$1</div>');
+  html = html.replace(/^\d+\.[ ]?(.+)$/gm, '<div class="md-li md-ol">$1</div>');
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a class="md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\n/g, '<br>');
+
+  return html;
 }

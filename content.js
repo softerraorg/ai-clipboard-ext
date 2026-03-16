@@ -440,21 +440,36 @@ function addOverlayMsg(text, type) {
     div.className = "aip-msg aip-msg-user";
     div.innerHTML = `<div class="aip-msg-label">You</div><div class="aip-msg-text">${escHTML(text)}</div>`;
   } else if (type === "ai") {
+    const hasProposal = /PROPOSAL:|Hook Options|Suggested Price|Red Flag|ADDITIONAL NOTES/i.test(text);
     div.className = "aip-msg aip-msg-ai";
     div.innerHTML = `
       <div class="aip-msg-label">AI</div>
-      <div class="aip-msg-text">${escHTML(text)}</div>
+      <div class="aip-msg-text aip-md">${renderMD(text)}</div>
       <div class="aip-msg-actions">
-        <button class="aip-action-btn aip-copy-btn">Copy</button>
+        ${hasProposal ? '<button class="aip-action-btn aip-copy-proposal-btn">Copy Proposal</button>' : ''}
+        <button class="aip-action-btn aip-copy-btn">Copy All</button>
         <button class="aip-action-btn aip-retry-btn">Retry</button>
       </div>
     `;
+    if (hasProposal) {
+      div.querySelector(".aip-copy-proposal-btn").addEventListener("click", function() {
+        const proposalOnly = extractProposal(text);
+        navigator.clipboard.writeText(proposalOnly).then(() => {
+          this.textContent = "Copied!";
+          this.classList.add("copied");
+          setTimeout(() => {
+            this.textContent = "Copy Proposal";
+            this.classList.remove("copied");
+          }, 2000);
+        });
+      });
+    }
     div.querySelector(".aip-copy-btn").addEventListener("click", function() {
-      navigator.clipboard.writeText(text).then(() => {
+      navigator.clipboard.writeText(stripMD(text)).then(() => {
         this.textContent = "Copied!";
         this.classList.add("copied");
         setTimeout(() => {
-          this.textContent = "Copy";
+          this.textContent = "Copy All";
           this.classList.remove("copied");
         }, 2000);
       });
@@ -572,6 +587,72 @@ function escHTML(text) {
   const d = document.createElement("div");
   d.textContent = text;
   return d.innerHTML;
+}
+
+function stripMD(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '$1')
+    .replace(/`([^`]+?)`/g, '$1')
+    .replace(/^#{1,4}\s*/gm, '')
+    .replace(/^---$/gm, '')
+    .trim();
+}
+
+function extractProposal(text) {
+  let proposal = text;
+
+  const proposalMatch = text.search(/^PROPOSAL:?\s*$/mi);
+  if (proposalMatch !== -1) {
+    proposal = proposal.substring(proposalMatch).replace(/^PROPOSAL:?\s*/i, '').trim();
+  } else {
+    const evalEnd = text.search(/^---$/m);
+    if (evalEnd !== -1) {
+      proposal = proposal.substring(evalEnd + 3).trim();
+    }
+  }
+
+  const cutPatterns = [
+    /\nADDITIONAL NOTES:?\s*$/mi,
+    /\nHook Options:?\s*$/mi,
+    /\n\*?\*?Hook Options\*?\*?:?/i,
+    /\n\*?\*?Red Flags?\*?\*?:?/i,
+    /\n\*?\*?Suggested Price/i,
+    /\n\*?\*?Why (these|those) portfolio/i,
+  ];
+
+  for (const pattern of cutPatterns) {
+    const match = proposal.search(pattern);
+    if (match !== -1) {
+      proposal = proposal.substring(0, match).trim();
+      break;
+    }
+  }
+
+  if (proposal.startsWith('---')) proposal = proposal.substring(3).trim();
+  if (proposal.endsWith('---')) proposal = proposal.substring(0, proposal.length - 3).trim();
+
+  return stripMD(proposal);
+}
+
+function renderMD(text) {
+  let html = escHTML(text);
+
+  html = html.replace(/^### (.+)$/gm, '<h4 class="aip-md-h">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="aip-md-h">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h3 class="aip-md-h">$1</h3>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/`([^`]+?)`/g, '<code class="aip-md-code">$1</code>');
+  html = html.replace(/^---$/gm, '<hr class="aip-md-hr">');
+  html = html.replace(/^- \[x\] (.+)$/gm, '<div class="aip-md-check done">$1</div>');
+  html = html.replace(/^- \[ \] (.+)$/gm, '<div class="aip-md-check">$1</div>');
+  html = html.replace(/^- (.+)$/gm, '<div class="aip-md-li">$1</div>');
+  html = html.replace(/^\d+\.[ ]?(.+)$/gm, '<div class="aip-md-li aip-md-ol">$1</div>');
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a class="aip-md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\n/g, '<br>');
+
+  return html;
 }
 
 // ============================================================
@@ -817,6 +898,8 @@ function getOverlayCSS() {
     }
     .aip-action-btn:hover { border-color: #7c83ff; color: #fff; }
     .aip-action-btn.copied { border-color: #4ade80; color: #4ade80; }
+    .aip-copy-proposal-btn { border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .aip-copy-proposal-btn:hover { border-color: #fbbf24; color: #fbbf24; }
 
     /* ---- Loading ---- */
     .aip-loading {
@@ -962,6 +1045,23 @@ function getOverlayCSS() {
     .aip-qbtn:hover { border-color: #7c83ff; color: #ccc; }
     .aip-n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
     .aip-n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
+
+    /* Markdown rendering */
+    .aip-md { white-space: normal; }
+    .aip-md-h { font-size: 14px; font-weight: 700; color: #fff; margin: 10px 0 6px; }
+    .aip-md h4.aip-md-h { font-size: 13px; }
+    .aip-md-code { background: #1a1a3a; border: 1px solid #2a2a4a; border-radius: 4px; padding: 1px 5px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #f59e0b; }
+    .aip-md-hr { border: none; border-top: 1px solid #2a2a4a; margin: 10px 0; }
+    .aip-md-li { padding-left: 14px; position: relative; margin: 2px 0; }
+    .aip-md-li::before { content: "•"; position: absolute; left: 2px; color: #7c83ff; }
+    .aip-md-ol::before { content: counter(ol-counter) "."; counter-increment: ol-counter; color: #7c83ff; }
+    .aip-md-check { padding-left: 20px; position: relative; margin: 2px 0; }
+    .aip-md-check::before { content: "☐"; position: absolute; left: 2px; color: #666; }
+    .aip-md-check.done::before { content: "☑"; color: #4ade80; }
+    .aip-md-link { color: #7c83ff; text-decoration: none; word-break: break-all; }
+    .aip-md-link:hover { text-decoration: underline; color: #9da3ff; }
+    .aip-md strong { color: #fff; }
+    .aip-md em { color: #ccc; font-style: italic; }
   `;
 }
 
