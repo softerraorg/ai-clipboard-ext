@@ -281,6 +281,8 @@
       transition: all 0.2s;
     }
     .quick-btn:hover { border-color: #7c83ff; color: #ccc; }
+    .quick-btn.n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .quick-btn.n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
 
     /* ---- Settings & Shortcuts ---- */
     .panel-content { padding: 16px; overflow-y: auto; flex: 1; }
@@ -427,6 +429,7 @@
         </button>
       </div>
       <div class="quick-actions" id="quickActions">
+        <button class="quick-btn n8n-btn" id="generateProposal">⚡ Generate Proposal</button>
         <button class="quick-btn" data-prompt="Write a professional reply to the context above">Reply pro</button>
         <button class="quick-btn" data-prompt="Write a short friendly reply">Reply casual</button>
         <button class="quick-btn" data-prompt="Politely decline this request">Decline</button>
@@ -462,6 +465,10 @@
       <div class="setting-group">
         <label>Anthropic API Key</label>
         <input type="password" class="setting-input" id="apiKey" placeholder="sk-ant-..." spellcheck="false">
+      </div>
+      <div class="setting-group">
+        <label>n8n Proposal Bot Webhook URL</label>
+        <input type="text" class="setting-input" id="n8nWebhookUrl" placeholder="https://your-n8n.com/webhook/.../chat" spellcheck="false">
       </div>
       <div class="setting-group">
         <label>Custom System Prompt (Chat tab)</label>

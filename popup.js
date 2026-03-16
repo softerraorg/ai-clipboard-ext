@@ -8,9 +8,10 @@ let isProcessing = false;
 // ---- Init ----
 document.addEventListener("DOMContentLoaded", () => {
   // Load saved settings
-  chrome.storage.sync.get(["apiKey", "customPrompt"], (result) => {
+  chrome.storage.sync.get(["apiKey", "customPrompt", "n8nWebhookUrl"], (result) => {
     if (result.apiKey) document.getElementById("apiKey").value = result.apiKey;
     if (result.customPrompt) document.getElementById("customPrompt").value = result.customPrompt;
+    if (result.n8nWebhookUrl) document.getElementById("n8nWebhookUrl").value = result.n8nWebhookUrl;
   });
 
   // Tab switching
@@ -61,8 +62,13 @@ document.addEventListener("DOMContentLoaded", () => {
     contextToggle.classList.remove("active");
   });
 
+  // Generate Proposal button (n8n)
+  document.getElementById("generateProposal").addEventListener("click", () => {
+    sendN8nProposal();
+  });
+
   // Quick action buttons
-  document.querySelectorAll(".quick-btn").forEach(btn => {
+  document.querySelectorAll(".quick-btn:not(.n8n-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       document.getElementById("promptInput").value = btn.dataset.prompt;
       sendMessage();
@@ -82,8 +88,9 @@ document.addEventListener("DOMContentLoaded", () => {
 function saveSettings() {
   const apiKey = document.getElementById("apiKey").value.trim();
   const customPrompt = document.getElementById("customPrompt").value.trim();
+  const n8nWebhookUrl = document.getElementById("n8nWebhookUrl").value.trim();
 
-  chrome.storage.sync.set({ apiKey, customPrompt }, () => {
+  chrome.storage.sync.set({ apiKey, customPrompt, n8nWebhookUrl }, () => {
     const status = document.getElementById("saveStatus");
     status.style.display = "block";
     setTimeout(() => { status.style.display = "none"; }, 2000);
@@ -270,6 +277,56 @@ function callAPI_direct(userMessage) {
       }
     );
   });
+}
+
+// ---- n8n Proposal Bot ----
+async function sendN8nProposal() {
+  if (isProcessing) return;
+
+  const contextInput = document.getElementById("contextInput");
+  const promptInput = document.getElementById("promptInput");
+  const jobDescription = contextInput.value.trim() || promptInput.value.trim();
+
+  if (!jobDescription) {
+    addMessage("Paste the job description first — use the 📎 button or type it in the input.", "error");
+    return;
+  }
+
+  addMessage("⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : ""), "user");
+  promptInput.value = "";
+  promptInput.style.height = "auto";
+
+  const emptyState = document.getElementById("emptyState");
+  if (emptyState) emptyState.style.display = "none";
+
+  const loadingEl = addLoading();
+  isProcessing = true;
+  document.getElementById("sendBtn").disabled = true;
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { action: "n8n-proposal", text: jobDescription },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else if (response && response.success) {
+            resolve(response.text);
+          } else {
+            reject(new Error(response?.error || "Unknown error"));
+          }
+        }
+      );
+    });
+    loadingEl.remove();
+    addMessage(result, "ai");
+  } catch (error) {
+    loadingEl.remove();
+    addMessage("Error: " + error.message, "error");
+  } finally {
+    isProcessing = false;
+    document.getElementById("sendBtn").disabled = false;
+  }
 }
 
 function escapeHtml(text) {

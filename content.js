@@ -237,7 +237,7 @@ function getPanelHTML() {
         <div class="aip-logo">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
         </div>
-        <span class="aip-title">AI Chat</span>
+        <span class="aip-title">Softerra Proposal Bot</span>
       </div>
       <div class="aip-header-actions">
         <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear chat">
@@ -274,6 +274,7 @@ function getPanelHTML() {
         </button>
       </div>
       <div class="aip-quick" id="aip-quick">
+        <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
         <button class="aip-qbtn" data-p="Write a professional reply to the context above">Reply pro</button>
         <button class="aip-qbtn" data-p="Write a short friendly reply">Casual</button>
         <button class="aip-qbtn" data-p="Politely decline this request">Decline</button>
@@ -340,8 +341,13 @@ function setupPanelEvents() {
     }
   });
 
+  // Generate Proposal (n8n)
+  shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
+    overlayN8nProposal();
+  });
+
   // Quick actions
-  shadow.querySelectorAll(".aip-qbtn").forEach(btn => {
+  shadow.querySelectorAll(".aip-qbtn:not(.aip-n8n-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
       shadow.getElementById("aip-prompt").value = btn.dataset.p;
       overlaySendMessage();
@@ -353,6 +359,11 @@ function setupPanelEvents() {
     this.style.height = "auto";
     this.style.height = Math.min(this.scrollHeight, 100) + "px";
   });
+
+  // Prevent host page from capturing keyboard events (fixes spacebar, arrows, etc.)
+  shadow.getElementById("aip-panel").addEventListener("keydown", (e) => e.stopPropagation(), true);
+  shadow.getElementById("aip-panel").addEventListener("keyup", (e) => e.stopPropagation(), true);
+  shadow.getElementById("aip-panel").addEventListener("keypress", (e) => e.stopPropagation(), true);
 }
 
 async function overlaySendMessage() {
@@ -508,6 +519,55 @@ async function retryOverlayMsg(userMessage) {
   }
 }
 
+async function overlayN8nProposal() {
+  if (overlayProcessing) return;
+
+  const promptEl = shadow.getElementById("aip-prompt");
+  const ctxEl = shadow.getElementById("aip-ctx-input");
+  const jobDescription = ctxEl.value.trim() || promptEl.value.trim();
+
+  if (!jobDescription) {
+    addOverlayMsg("Paste the job description first — use the paperclip button or type it in the input.", "error");
+    return;
+  }
+
+  addOverlayMsg("⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : ""), "user");
+  promptEl.value = "";
+  promptEl.style.height = "auto";
+
+  const emptyState = shadow.getElementById("aip-empty");
+  if (emptyState) emptyState.remove();
+
+  const loadingEl = addOverlayLoading();
+  overlayProcessing = true;
+  shadow.getElementById("aip-send").disabled = true;
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { action: "n8n-proposal", text: jobDescription },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else if (response && response.success) {
+            resolve(response.text);
+          } else {
+            reject(new Error(response?.error || "Unknown error"));
+          }
+        }
+      );
+    });
+    loadingEl.remove();
+    addOverlayMsg(result, "ai");
+  } catch (error) {
+    loadingEl.remove();
+    addOverlayMsg("Error: " + error.message, "error");
+  } finally {
+    overlayProcessing = false;
+    shadow.getElementById("aip-send").disabled = false;
+  }
+}
+
 function escHTML(text) {
   const d = document.createElement("div");
   d.textContent = text;
@@ -577,8 +637,8 @@ function getOverlayCSS() {
       bottom: 24px;
       right: 24px;
       z-index: 2147483646;
-      width: 52px;
-      height: 52px;
+      width: 75px;
+      height: 75px;
       border-radius: 50%;
       border: none;
       background: linear-gradient(135deg, #7c83ff, #6a5aff);
@@ -606,8 +666,10 @@ function getOverlayCSS() {
       bottom: 24px;
       right: 24px;
       z-index: 2147483647;
-      width: 400px;
-      height: 560px;
+      width: 100%;
+      max-width: 900px;
+      height: 100%;
+      max-height: 700px;
       background: #0c0c18;
       border: 1px solid #1f1f3a;
       border-radius: 16px;
@@ -707,7 +769,7 @@ function getOverlayCSS() {
     .aip-msg {
       padding: 10px 13px;
       border-radius: 12px;
-      font-size: 13px;
+      font-size: 18px;
       line-height: 1.55;
       max-width: 90%;
       word-wrap: break-word;
@@ -891,13 +953,15 @@ function getOverlayCSS() {
       border: 1px solid #1f1f3a;
       border-radius: 20px;
       color: #888;
-      font-size: 11px;
+      font-size: 16px;
       padding: 3px 10px;
       cursor: pointer;
       font-family: inherit;
       transition: all 0.15s;
     }
     .aip-qbtn:hover { border-color: #7c83ff; color: #ccc; }
+    .aip-n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .aip-n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
   `;
 }
 
