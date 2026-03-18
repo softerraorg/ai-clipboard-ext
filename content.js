@@ -75,8 +75,13 @@ async function polishText(text, mode) {
       );
     });
 
-    await navigator.clipboard.writeText(response);
     const replaced = tryReplaceText(response);
+
+    try {
+      await navigator.clipboard.writeText(response);
+    } catch (clipErr) {
+      // Clipboard access blocked by browser — not critical
+    }
 
     if (replaced) {
       showNotification("Text replaced!", "success");
@@ -85,10 +90,11 @@ async function polishText(text, mode) {
     }
   } catch (error) {
     console.error("AI Polisher error:", error);
-    if (error.message.includes("API key")) {
+    const errMsg = error?.message || String(error);
+    if (errMsg.includes("API key")) {
       showNotification("Set your API key — click extension icon", "error");
     } else {
-      showNotification("Error: " + error.message.substring(0, 50), "error");
+      showNotification("Error: " + errMsg.substring(0, 50), "error");
     }
   } finally {
     isProcessing = false;
@@ -276,11 +282,6 @@ function getPanelHTML() {
       <div class="aip-quick" id="aip-quick">
         <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
         <button class="aip-qbtn" data-p="Write a professional reply to the context above">Reply pro</button>
-        <button class="aip-qbtn" data-p="Write a short friendly reply">Casual</button>
-        <button class="aip-qbtn" data-p="Politely decline this request">Decline</button>
-        <button class="aip-qbtn" data-p="Summarize this">Summarize</button>
-        <button class="aip-qbtn" data-p="Fix the grammar and improve this text">Fix grammar</button>
-        <button class="aip-qbtn" data-p="Explain this simply">Explain</button>
       </div>
     </div>
   `;
@@ -333,14 +334,6 @@ function setupPanelEvents() {
   // Send
   shadow.getElementById("aip-send").addEventListener("click", overlaySendMessage);
 
-  // Enter to send
-  shadow.getElementById("aip-prompt").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      overlaySendMessage();
-    }
-  });
-
   // Generate Proposal (n8n)
   shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
     overlayN8nProposal();
@@ -360,8 +353,17 @@ function setupPanelEvents() {
     this.style.height = Math.min(this.scrollHeight, 100) + "px";
   });
 
-  // Prevent host page from capturing keyboard events (fixes spacebar, arrows, etc.)
-  shadow.getElementById("aip-panel").addEventListener("keydown", (e) => e.stopPropagation(), true);
+  // Capture-phase handler: Enter to send, Escape to close, block host page from stealing keys
+  shadow.getElementById("aip-panel").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      togglePanel();
+    } else if (e.key === "Enter" && !e.shiftKey && e.target.id === "aip-prompt") {
+      e.preventDefault();
+      overlaySendMessage();
+    }
+    e.stopPropagation();
+  }, true);
   shadow.getElementById("aip-panel").addEventListener("keyup", (e) => e.stopPropagation(), true);
   shadow.getElementById("aip-panel").addEventListener("keypress", (e) => e.stopPropagation(), true);
 }
@@ -446,19 +448,19 @@ function addOverlayMsg(text, type) {
       <div class="aip-msg-label">AI</div>
       <div class="aip-msg-text aip-md">${renderMD(text)}</div>
       <div class="aip-msg-actions">
-        ${hasProposal ? '<button class="aip-action-btn aip-copy-proposal-btn">Copy Proposal</button>' : ''}
-        <button class="aip-action-btn aip-copy-btn">Copy All</button>
-        <button class="aip-action-btn aip-retry-btn">Retry</button>
+        ${hasProposal ? '<button class="aip-action-btn aip-copy-proposal-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> Copy Proposal</button>' : ''}
+        <button class="aip-action-btn aip-copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy All</button>
+        <button class="aip-action-btn aip-retry-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg> Retry</button>
       </div>
     `;
     if (hasProposal) {
       div.querySelector(".aip-copy-proposal-btn").addEventListener("click", function() {
         const proposalOnly = extractProposal(text);
         navigator.clipboard.writeText(proposalOnly).then(() => {
-          this.textContent = "Copied!";
+          this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
           this.classList.add("copied");
           setTimeout(() => {
-            this.textContent = "Copy Proposal";
+            this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> Copy Proposal';
             this.classList.remove("copied");
           }, 2000);
         });
@@ -466,10 +468,10 @@ function addOverlayMsg(text, type) {
     }
     div.querySelector(".aip-copy-btn").addEventListener("click", function() {
       navigator.clipboard.writeText(stripMD(text)).then(() => {
-        this.textContent = "Copied!";
+        this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
         this.classList.add("copied");
         setTimeout(() => {
-          this.textContent = "Copy All";
+          this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy All';
           this.classList.remove("copied");
         }, 2000);
       });
@@ -747,9 +749,9 @@ function getOverlayCSS() {
       bottom: 24px;
       right: 24px;
       z-index: 2147483647;
-      width: 100%;
+      width: 90%;
       max-width: 900px;
-      height: 100%;
+      height: 90%;
       max-height: 700px;
       background: #0c0c18;
       border: 1px solid #1f1f3a;
@@ -882,24 +884,41 @@ function getOverlayCSS() {
 
     .aip-msg-actions {
       display: flex;
-      gap: 6px;
-      margin-top: 8px;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid #1f1f3a;
     }
     .aip-action-btn {
-      background: #1a1a2e;
+      background: #14142a;
       border: 1px solid #2a2a4a;
-      border-radius: 6px;
-      color: #aaa;
-      font-size: 11px;
-      padding: 3px 10px;
+      border-radius: 8px;
+      color: #999;
+      font-size: 12px;
+      padding: 7px 14px;
       cursor: pointer;
       font-family: inherit;
-      transition: all 0.15s;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
-    .aip-action-btn:hover { border-color: #7c83ff; color: #fff; }
-    .aip-action-btn.copied { border-color: #4ade80; color: #4ade80; }
-    .aip-copy-proposal-btn { border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
-    .aip-copy-proposal-btn:hover { border-color: #fbbf24; color: #fbbf24; }
+    .aip-action-btn:hover { background: #1e1e3a; border-color: #7c83ff; color: #fff; transform: translateY(-1px); }
+    .aip-action-btn:active { transform: translateY(0); }
+    .aip-action-btn.copied { background: #0d3320; border-color: #166534; color: #4ade80; }
+    .aip-copy-proposal-btn {
+      background: linear-gradient(135deg, #2a1a00, #1a1a2e);
+      border-color: #f59e0b;
+      color: #f59e0b;
+      font-weight: 600;
+    }
+    .aip-copy-proposal-btn:hover {
+      background: linear-gradient(135deg, #3a2500, #2a2a4a);
+      border-color: #fbbf24;
+      color: #fbbf24;
+      box-shadow: 0 2px 12px rgba(245, 158, 11, 0.15);
+    }
+    .aip-copy-proposal-btn.copied { background: #0d3320; border-color: #166534; color: #4ade80; }
 
     /* ---- Loading ---- */
     .aip-loading {

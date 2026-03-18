@@ -132,24 +132,42 @@
 
     .msg-actions {
       display: flex;
-      gap: 6px;
-      margin-top: 8px;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid #1f1f3a;
     }
 
     .msg-action-btn {
-      background: #1a1a2e;
+      background: #14142a;
       border: 1px solid #2a2a4a;
-      border-radius: 6px;
-      color: #aaa;
-      font-size: 11px;
-      padding: 4px 10px;
+      border-radius: 8px;
+      color: #999;
+      font-size: 12px;
+      padding: 7px 14px;
       cursor: pointer;
+      font-family: inherit;
       transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
     }
-    .msg-action-btn:hover { border-color: #7c83ff; color: #fff; }
-    .msg-action-btn.copied { border-color: #4ade80; color: #4ade80; }
-    .copy-proposal-btn { border-color: #f59e0b !important; color: #f59e0b !important; font-weight: 600; }
-    .copy-proposal-btn:hover { border-color: #fbbf24 !important; color: #fbbf24 !important; }
+    .msg-action-btn:hover { background: #1e1e3a; border-color: #7c83ff; color: #fff; transform: translateY(-1px); }
+    .msg-action-btn:active { transform: translateY(0); }
+    .msg-action-btn.copied { background: #0d3320; border-color: #166534; color: #4ade80; }
+    .copy-proposal-btn {
+      background: linear-gradient(135deg, #2a1a00, #1a1a2e) !important;
+      border-color: #f59e0b !important;
+      color: #f59e0b !important;
+      font-weight: 600;
+    }
+    .copy-proposal-btn:hover {
+      background: linear-gradient(135deg, #3a2500, #2a2a4a) !important;
+      border-color: #fbbf24 !important;
+      color: #fbbf24 !important;
+      box-shadow: 0 2px 12px rgba(245, 158, 11, 0.15);
+    }
+    .copy-proposal-btn.copied { background: #0d3320 !important; border-color: #166534 !important; color: #4ade80 !important; }
 
     .msg-loading {
       background: #12122a;

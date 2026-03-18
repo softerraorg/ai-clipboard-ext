@@ -191,9 +191,9 @@ function addMessage(text, type) {
       <div class="msg-label">AI Response</div>
       <div class="md-content">${renderMarkdown(text)}</div>
       <div class="msg-actions">
-        ${hasProposal ? '<button class="msg-action-btn copy-proposal-btn">⚡ Copy Proposal</button>' : ''}
-        <button class="msg-action-btn copy-btn">📋 Copy All</button>
-        <button class="msg-action-btn retry-btn">🔄 Retry</button>
+        ${hasProposal ? '<button class="msg-action-btn copy-proposal-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> Copy Proposal</button>' : ''}
+        <button class="msg-action-btn copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy All</button>
+        <button class="msg-action-btn retry-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg> Retry</button>
       </div>
     `;
 
@@ -201,10 +201,10 @@ function addMessage(text, type) {
       msgDiv.querySelector(".copy-proposal-btn").addEventListener("click", function() {
         const proposalOnly = extractProposalText(text);
         navigator.clipboard.writeText(proposalOnly).then(() => {
-          this.textContent = "✓ Copied!";
+          this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
           this.classList.add("copied");
           setTimeout(() => {
-            this.textContent = "⚡ Copy Proposal";
+            this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg> Copy Proposal';
             this.classList.remove("copied");
           }, 2000);
         });
@@ -213,10 +213,10 @@ function addMessage(text, type) {
 
     msgDiv.querySelector(".copy-btn").addEventListener("click", function() {
       navigator.clipboard.writeText(stripMarkdownChars(text)).then(() => {
-        this.textContent = "✓ Copied!";
+        this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
         this.classList.add("copied");
         setTimeout(() => {
-          this.textContent = "📋 Copy All";
+          this.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy All';
           this.classList.remove("copied");
         }, 2000);
       });
