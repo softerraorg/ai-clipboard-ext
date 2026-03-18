@@ -281,7 +281,10 @@ function getPanelHTML() {
       </div>
       <div class="aip-quick" id="aip-quick">
         <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
-        <button class="aip-qbtn" data-p="Write a professional reply to the context above">Reply pro</button>
+        <button class="aip-qbtn aip-analyze-btn" data-p="Analyze this client message. Break down: what they are asking for, what is clear, what is unclear or missing, and what questions I should ask them before starting.">Analyze</button>
+        <button class="aip-qbtn aip-reply-btn" data-p="Write a short, natural reply to this client message. Keep it concise, human, and direct. No fluff, no AI-sounding language. Just a real response I can copy and send.">Write Reply</button>
+        <button class="aip-qbtn" data-p="Improve this text. Fix grammar, clean up the flow, make it sound more professional but still natural. Keep my original meaning, do not add new content.">Improve</button>
+        <button class="aip-qbtn" data-p="Write a short follow-up message to this client. Keep it brief, friendly, and action-oriented. Just a nudge, not a paragraph.">Follow up</button>
       </div>
     </div>
   `;
@@ -1055,15 +1058,20 @@ function getOverlayCSS() {
       border: 1px solid #1f1f3a;
       border-radius: 20px;
       color: #888;
-      font-size: 16px;
-      padding: 3px 10px;
+      font-size: 12px;
+      padding: 6px 14px;
       cursor: pointer;
       font-family: inherit;
-      transition: all 0.15s;
+      transition: all 0.2s;
     }
-    .aip-qbtn:hover { border-color: #7c83ff; color: #ccc; }
-    .aip-n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
-    .aip-n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
+    .aip-qbtn:hover { border-color: #7c83ff; color: #ccc; transform: translateY(-1px); }
+    .aip-qbtn:active { transform: translateY(0); }
+    .aip-n8n-btn { background: linear-gradient(135deg, #2a1a00, #1a1a2e); border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .aip-n8n-btn:hover { background: linear-gradient(135deg, #3a2500, #2a2a4a); border-color: #fbbf24; color: #fbbf24; box-shadow: 0 2px 10px rgba(245, 158, 11, 0.15); }
+    .aip-analyze-btn { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
+    .aip-analyze-btn:hover { border-color: #7dd3fc; color: #7dd3fc; box-shadow: 0 2px 10px rgba(56, 189, 248, 0.15); }
+    .aip-reply-btn { border-color: #4ade80; color: #4ade80; font-weight: 600; }
+    .aip-reply-btn:hover { border-color: #86efac; color: #86efac; box-shadow: 0 2px 10px rgba(74, 222, 128, 0.15); }
 
     /* Markdown rendering */
     .aip-md { white-space: normal; }

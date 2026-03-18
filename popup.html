@@ -296,13 +296,18 @@
       border-radius: 20px;
       color: #888;
       font-size: 11px;
-      padding: 4px 12px;
+      padding: 5px 13px;
       cursor: pointer;
       transition: all 0.2s;
     }
-    .quick-btn:hover { border-color: #7c83ff; color: #ccc; }
-    .quick-btn.n8n-btn { background: #1a1a3a; border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
-    .quick-btn.n8n-btn:hover { background: #2a2a4a; border-color: #fbbf24; color: #fbbf24; }
+    .quick-btn:hover { border-color: #7c83ff; color: #ccc; transform: translateY(-1px); }
+    .quick-btn:active { transform: translateY(0); }
+    .quick-btn.n8n-btn { background: linear-gradient(135deg, #2a1a00, #1a1a2e); border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .quick-btn.n8n-btn:hover { background: linear-gradient(135deg, #3a2500, #2a2a4a); border-color: #fbbf24; color: #fbbf24; box-shadow: 0 2px 10px rgba(245, 158, 11, 0.15); }
+    .quick-btn.analyze-btn { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
+    .quick-btn.analyze-btn:hover { border-color: #7dd3fc; color: #7dd3fc; box-shadow: 0 2px 10px rgba(56, 189, 248, 0.15); }
+    .quick-btn.reply-btn { border-color: #4ade80; color: #4ade80; font-weight: 600; }
+    .quick-btn.reply-btn:hover { border-color: #86efac; color: #86efac; box-shadow: 0 2px 10px rgba(74, 222, 128, 0.15); }
 
     /* Markdown rendering */
     .md-content { white-space: normal; }
@@ -466,12 +471,10 @@
       </div>
       <div class="quick-actions" id="quickActions">
         <button class="quick-btn n8n-btn" id="generateProposal">⚡ Generate Proposal</button>
-        <button class="quick-btn" data-prompt="Write a professional reply to the context above">Reply pro</button>
-        <button class="quick-btn" data-prompt="Write a short friendly reply">Reply casual</button>
-        <button class="quick-btn" data-prompt="Politely decline this request">Decline</button>
-        <button class="quick-btn" data-prompt="Summarize this">Summarize</button>
-        <button class="quick-btn" data-prompt="Fix the grammar and improve this text">Fix grammar</button>
-        <button class="quick-btn" data-prompt="Explain this simply">Explain</button>
+        <button class="quick-btn analyze-btn" data-prompt="Analyze this client message. Break down: what they are asking for, what is clear, what is unclear or missing, and what questions I should ask them before starting.">Analyze</button>
+        <button class="quick-btn reply-btn" data-prompt="Write a short, natural reply to this client message. Keep it concise, human, and direct. No fluff, no AI-sounding language. Just a real response I can copy and send.">Write Reply</button>
+        <button class="quick-btn" data-prompt="Improve this text. Fix grammar, clean up the flow, make it sound more professional but still natural. Keep my original meaning, do not add new content.">Improve</button>
+        <button class="quick-btn" data-prompt="Write a short follow-up message to this client. Keep it brief, friendly, and action-oriented. Just a nudge, not a paragraph.">Follow up</button>
       </div>
     </div>
   </div>
