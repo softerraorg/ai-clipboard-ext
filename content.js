@@ -279,6 +279,7 @@ function getPanelHTML() {
         <button class="aip-qbtn" data-p="Improve this text. Fix grammar, clean up the flow, make it sound more professional but still natural. Keep my original meaning, do not add new content.">Improve</button>
         <button class="aip-qbtn" data-p="Write a short follow-up message to this client. Keep it brief, friendly, and action-oriented. Just a nudge, not a paragraph.">Follow up</button>
         <button class="aip-qbtn aip-status-btn" data-p="This is a work report I did for a client. Summarize it into a short, human client message. Extract only what was done, merge similar items into one bullet, keep each point to one line. Start with a casual greeting using the client name if found. End with a line saying details and screenshots are in the doc. Sound like a real person, not AI. No fluff, no filler.">Status Update</button>
+        <button class="aip-qbtn aip-tasks-btn" data-p="Extract actionable tasks from this client chat. For each task: numbered, short technical title, tag in brackets: [Implementation], [Investigate], [Planning], [Urgent], [Question]. Add one short line of context only if the task is not obvious. Keep the client's exact technical details (URLs, file names, app names, specific requirements). Do not add client quotes. Do not explain why. Just list the tasks, concise and technical.">Create Tasks</button>
       </div>
     </div>
   `;
@@ -982,6 +983,8 @@ function getOverlayCSS() {
     .aip-reply-btn:hover { border-color: #86efac; color: #86efac; box-shadow: 0 2px 10px rgba(74, 222, 128, 0.15); }
     .aip-status-btn { border-color: #c084fc; color: #c084fc; font-weight: 600; }
     .aip-status-btn:hover { border-color: #d8b4fe; color: #d8b4fe; box-shadow: 0 2px 10px rgba(192, 132, 252, 0.15); }
+    .aip-tasks-btn { border-color: #fb923c; color: #fb923c; font-weight: 600; }
+    .aip-tasks-btn:hover { border-color: #fdba74; color: #fdba74; box-shadow: 0 2px 10px rgba(251, 146, 60, 0.15); }
 
     /* Markdown rendering */
     .aip-md { white-space: normal; }
