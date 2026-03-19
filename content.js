@@ -266,15 +266,8 @@ function getPanelHTML() {
     </div>
 
     <div class="aip-input-area">
-      <div class="aip-ctx-box" id="aip-ctx-box">
-        <textarea class="aip-ctx-input" id="aip-ctx-input" rows="2" placeholder="Paste reference text (client message, code, error...)"></textarea>
-        <button class="aip-ctx-close" id="aip-ctx-close">&times;</button>
-      </div>
       <div class="aip-input-row">
-        <button class="aip-icon-btn" id="aip-ctx-toggle" title="Attach context">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-        </button>
-        <textarea class="aip-prompt" id="aip-prompt" rows="1" placeholder="Ask anything..."></textarea>
+        <textarea class="aip-prompt" id="aip-prompt" rows="3" placeholder="Paste client message here, then hit a button below..."></textarea>
         <button class="aip-send-btn" id="aip-send">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
@@ -310,30 +303,6 @@ function setupPanelEvents() {
     chat.appendChild(empty);
   });
 
-  // Context toggle
-  const ctxBox = shadow.getElementById("aip-ctx-box");
-  const ctxToggle = shadow.getElementById("aip-ctx-toggle");
-  const ctxInput = shadow.getElementById("aip-ctx-input");
-  const ctxClose = shadow.getElementById("aip-ctx-close");
-
-  ctxToggle.addEventListener("click", () => {
-    const isVisible = ctxBox.classList.contains("visible");
-    if (isVisible) {
-      ctxBox.classList.remove("visible");
-      ctxToggle.classList.remove("active");
-    } else {
-      ctxBox.classList.add("visible");
-      ctxToggle.classList.add("active");
-      ctxInput.focus();
-    }
-  });
-
-  ctxClose.addEventListener("click", () => {
-    ctxInput.value = "";
-    ctxBox.classList.remove("visible");
-    ctxToggle.classList.remove("active");
-  });
-
   // Send
   shadow.getElementById("aip-send").addEventListener("click", overlaySendMessage);
 
@@ -342,10 +311,16 @@ function setupPanelEvents() {
     overlayN8nProposal();
   });
 
-  // Quick actions
+  // Quick actions — prepend instruction to whatever's in the input
   shadow.querySelectorAll(".aip-qbtn:not(.aip-n8n-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
-      shadow.getElementById("aip-prompt").value = btn.dataset.p;
+      const promptEl = shadow.getElementById("aip-prompt");
+      const content = promptEl.value.trim();
+      if (content) {
+        promptEl.value = btn.dataset.p + "\n\n" + content;
+      } else {
+        promptEl.value = btn.dataset.p;
+      }
       overlaySendMessage();
     });
   });
@@ -353,7 +328,7 @@ function setupPanelEvents() {
   // Auto-resize prompt
   shadow.getElementById("aip-prompt").addEventListener("input", function() {
     this.style.height = "auto";
-    this.style.height = Math.min(this.scrollHeight, 100) + "px";
+    this.style.height = Math.min(this.scrollHeight, 150) + "px";
   });
 
   // Capture-phase handler: Enter to send, Escape to close, block host page from stealing keys
@@ -375,26 +350,11 @@ async function overlaySendMessage() {
   if (overlayProcessing) return;
 
   const promptEl = shadow.getElementById("aip-prompt");
-  const ctxEl = shadow.getElementById("aip-ctx-input");
-  const prompt = promptEl.value.trim();
-  const context = ctxEl.value.trim();
+  const userMessage = promptEl.value.trim();
 
-  if (!prompt && !context) return;
+  if (!userMessage) return;
 
-  let userMessage = "";
-  if (context && prompt) {
-    userMessage = `Reference/context:\n"""\n${context}\n"""\n\n${prompt}`;
-  } else if (context) {
-    userMessage = `Reference/context:\n"""\n${context}\n"""\n\nHelp me with the above.`;
-  } else {
-    userMessage = prompt;
-  }
-
-  const displayText = context && prompt
-    ? `[context attached]\n${prompt}`
-    : context ? `[context attached]` : prompt;
-
-  addOverlayMsg(displayText, "user");
+  addOverlayMsg(userMessage, "user");
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -543,11 +503,10 @@ async function overlayN8nProposal() {
   if (overlayProcessing) return;
 
   const promptEl = shadow.getElementById("aip-prompt");
-  const ctxEl = shadow.getElementById("aip-ctx-input");
-  const jobDescription = ctxEl.value.trim() || promptEl.value.trim();
+  const jobDescription = promptEl.value.trim();
 
   if (!jobDescription) {
-    addOverlayMsg("Paste the job description first — use the paperclip button or type it in the input.", "error");
+    addOverlayMsg("Paste the job description in the input box first.", "error");
     return;
   }
 
@@ -954,68 +913,15 @@ function getOverlayCSS() {
       background: #0e0e1c;
     }
 
-    .aip-ctx-box {
-      position: relative;
-      margin-bottom: 8px;
-      display: none;
-    }
-    .aip-ctx-box.visible { display: block; }
-
-    .aip-ctx-input {
-      width: 100%;
-      padding: 8px 28px 8px 10px;
-      background: #14142a;
-      border: 1px solid #2a2a4a;
-      border-radius: 8px;
-      color: #ccc;
-      font-size: 12px;
-      font-family: inherit;
-      resize: none;
-      outline: none;
-      max-height: 70px;
-      overflow-y: auto;
-      transition: border-color 0.15s;
-    }
-    .aip-ctx-input:focus { border-color: #7c83ff; }
-    .aip-ctx-input::placeholder { color: #444; }
-
-    .aip-ctx-close {
-      position: absolute;
-      top: 5px; right: 7px;
-      background: none;
-      border: none;
-      color: #555;
-      cursor: pointer;
-      font-size: 16px;
-      line-height: 1;
-    }
-    .aip-ctx-close:hover { color: #fb7185; }
-
     .aip-input-row {
       display: flex;
       gap: 7px;
       align-items: flex-end;
     }
 
-    .aip-icon-btn {
-      width: 38px; height: 38px;
-      background: #14142a;
-      border: 1px solid #2a2a4a;
-      border-radius: 10px;
-      color: #888;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: all 0.15s;
-    }
-    .aip-icon-btn:hover { border-color: #7c83ff; color: #fff; }
-    .aip-icon-btn.active { border-color: #7c83ff; background: #1a1a3a; color: #7c83ff; }
-
     .aip-prompt {
       flex: 1;
-      padding: 9px 12px;
+      padding: 10px 12px;
       background: #1a1a2e;
       border: 1px solid #2a2a4a;
       border-radius: 10px;
@@ -1024,8 +930,9 @@ function getOverlayCSS() {
       font-family: inherit;
       resize: none;
       outline: none;
-      min-height: 38px;
-      max-height: 100px;
+      min-height: 70px;
+      max-height: 150px;
+      overflow-y: auto;
       transition: border-color 0.15s;
     }
     .aip-prompt:focus { border-color: #7c83ff; }

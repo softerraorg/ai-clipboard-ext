@@ -38,49 +38,29 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Context toggle (📎 button)
-  const contextToggle = document.getElementById("contextToggle");
-  const contextBox = document.getElementById("contextBox");
-  const contextInput = document.getElementById("contextInput");
-  const clearBtn = document.getElementById("clearContext");
-
-  contextToggle.addEventListener("click", () => {
-    const isVisible = contextBox.style.display !== "none";
-    if (isVisible) {
-      contextBox.style.display = "none";
-      contextToggle.classList.remove("active");
-    } else {
-      contextBox.style.display = "block";
-      contextToggle.classList.add("active");
-      contextInput.focus();
-    }
-  });
-
-  clearBtn.addEventListener("click", () => {
-    contextInput.value = "";
-    contextBox.style.display = "none";
-    contextToggle.classList.remove("active");
-  });
-
   // Generate Proposal button (n8n)
   document.getElementById("generateProposal").addEventListener("click", () => {
     sendN8nProposal();
   });
 
-  // Quick action buttons
+  // Quick action buttons — prepend instruction to whatever's in the input
   document.querySelectorAll(".quick-btn:not(.n8n-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.getElementById("promptInput").value = btn.dataset.prompt;
+      const promptEl = document.getElementById("promptInput");
+      const content = promptEl.value.trim();
+      if (content) {
+        promptEl.value = btn.dataset.prompt + "\n\n" + content;
+      } else {
+        promptEl.value = btn.dataset.prompt;
+      }
       sendMessage();
     });
   });
 
-  // Auto-resize textareas
-  document.querySelectorAll(".prompt-input, .context-input").forEach(el => {
-    el.addEventListener("input", () => {
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 80) + "px";
-    });
+  // Auto-resize textarea
+  document.querySelector(".prompt-input").addEventListener("input", function() {
+    this.style.height = "auto";
+    this.style.height = Math.min(this.scrollHeight, 120) + "px";
   });
 });
 
@@ -102,30 +82,11 @@ async function sendMessage() {
   if (isProcessing) return;
 
   const promptInput = document.getElementById("promptInput");
-  const contextInput = document.getElementById("contextInput");
-  const prompt = promptInput.value.trim();
-  const context = contextInput.value.trim();
+  const userMessage = promptInput.value.trim();
 
-  if (!prompt && !context) return;
+  if (!userMessage) return;
 
-  // Build the user message
-  let userMessage = "";
-  if (context && prompt) {
-    userMessage = `Reference/context:\n"""\n${context}\n"""\n\n${prompt}`;
-  } else if (context) {
-    userMessage = `Reference/context:\n"""\n${context}\n"""\n\nHelp me with the above.`;
-  } else {
-    userMessage = prompt;
-  }
-
-  // Display what user typed
-  const displayText = context && prompt
-    ? `📎 ${context.substring(0, 80)}${context.length > 80 ? '...' : ''}\n\n${prompt}`
-    : context
-    ? `📎 ${context.substring(0, 120)}${context.length > 120 ? '...' : ''}`
-    : prompt;
-
-  addMessage(displayText, "user");
+  addMessage(userMessage, "user");
   promptInput.value = "";
   promptInput.style.height = "auto";
 
@@ -298,12 +259,11 @@ function callAPI_direct(userMessage) {
 async function sendN8nProposal() {
   if (isProcessing) return;
 
-  const contextInput = document.getElementById("contextInput");
   const promptInput = document.getElementById("promptInput");
-  const jobDescription = contextInput.value.trim() || promptInput.value.trim();
+  const jobDescription = promptInput.value.trim();
 
   if (!jobDescription) {
-    addMessage("Paste the job description first — use the 📎 button or type it in the input.", "error");
+    addMessage("Paste the job description in the input box first.", "error");
     return;
   }
 
