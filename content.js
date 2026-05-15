@@ -181,10 +181,255 @@ function showNotification(message, type = "info") {
 
 let overlayHost = null;
 let shadow = null;
-let chatHistory = [];
 let overlayProcessing = false;
 
-function initFloatingUI() {
+// --- Session storage model ---
+// sessions: [{ id, title, createdAt, updatedAt, messages: [{role, content}] }]
+// activeSessionId: id of the session currently displayed in this tab.
+//
+// chatHistory always points to the active session's messages array so the
+// existing push/pop semantics still work.
+
+const SESSIONS_KEY = "aip_sessions_v1";
+const LEGACY_CHAT_KEY = "aip_chat_history_v1";
+
+let sessions = [];
+let activeSessionId = null;
+let chatHistory = [];
+
+function newSessionId() {
+  return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+function getActiveSession() {
+  return sessions.find((s) => s.id === activeSessionId) || null;
+}
+
+function deriveTitle(messages) {
+  const firstUser = messages.find((m) => m.role === "user");
+  if (!firstUser) return "New chat";
+  return firstUser.content.replace(/\s+/g, " ").trim().slice(0, 48) || "New chat";
+}
+
+function touchActiveSession() {
+  const s = getActiveSession();
+  if (!s) return;
+  s.updatedAt = Date.now();
+  if (!s.title || s.title === "New chat") s.title = deriveTitle(s.messages);
+}
+
+function saveSessions() {
+  try {
+    chrome.storage.local.set({ [SESSIONS_KEY]: { sessions, activeSessionId } });
+  } catch (e) {
+    // ignore
+  }
+}
+
+function createNewSession({ activate = true } = {}) {
+  const id = newSessionId();
+  const session = {
+    id,
+    title: "New chat",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: []
+  };
+  sessions.unshift(session);
+  if (activate) {
+    activeSessionId = id;
+    chatHistory = session.messages;
+  }
+  return session;
+}
+
+function setActiveSession(id) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s) return;
+  activeSessionId = id;
+  chatHistory = s.messages;
+}
+
+function deleteSession(id) {
+  const idx = sessions.findIndex((s) => s.id === id);
+  if (idx === -1) return;
+  sessions.splice(idx, 1);
+  if (id === activeSessionId) {
+    if (sessions.length) {
+      setActiveSession(sessions[0].id);
+    } else {
+      createNewSession();
+    }
+  }
+}
+
+function loadSessionsFromStorage() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get([SESSIONS_KEY, LEGACY_CHAT_KEY], (result) => {
+        const data = result && result[SESSIONS_KEY];
+        if (data && Array.isArray(data.sessions)) {
+          sessions = data.sessions;
+          activeSessionId = data.activeSessionId || (sessions[0] && sessions[0].id);
+        }
+
+        // Migrate legacy single-chat history into a session, once.
+        const legacy = result && result[LEGACY_CHAT_KEY];
+        if (Array.isArray(legacy) && legacy.length && !sessions.some((s) => s.__migrated)) {
+          const id = newSessionId();
+          sessions.unshift({
+            id,
+            title: deriveTitle(legacy),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: legacy,
+            __migrated: true
+          });
+          activeSessionId = activeSessionId || id;
+          chrome.storage.local.remove([LEGACY_CHAT_KEY]);
+        }
+
+        if (!sessions.length) {
+          createNewSession();
+        } else {
+          const active = sessions.find((s) => s.id === activeSessionId);
+          if (active) {
+            chatHistory = active.messages;
+          } else {
+            setActiveSession(sessions[0].id);
+          }
+        }
+        resolve();
+      });
+    } catch (e) {
+      if (!sessions.length) createNewSession();
+      resolve();
+    }
+  });
+}
+
+function renderSessionList() {
+  const list = shadow.getElementById("aip-session-list");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (!sessions.length) {
+    const empty = document.createElement("div");
+    empty.className = "aip-session-empty";
+    empty.textContent = "No chats yet";
+    list.appendChild(empty);
+    return;
+  }
+
+  const sorted = [...sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  for (const s of sorted) {
+    const item = document.createElement("div");
+    item.className = "aip-session-item" + (s.id === activeSessionId ? " active" : "");
+    item.dataset.sid = s.id;
+    item.innerHTML = `
+      <div class="aip-session-meta">
+        <div class="aip-session-title">${escHTML(s.title || "New chat")}</div>
+        <div class="aip-session-time">${formatRelativeTime(s.updatedAt)}</div>
+      </div>
+      <button class="aip-session-del" title="Delete chat">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+      </button>
+    `;
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".aip-session-del")) return;
+      if (s.id === activeSessionId) {
+        closeSidebar();
+        return;
+      }
+      setActiveSession(s.id);
+      saveSessions();
+      rerenderActiveChat();
+      renderSessionList();
+      closeSidebar();
+    });
+    item.querySelector(".aip-session-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(s.id);
+      saveSessions();
+      rerenderActiveChat();
+      renderSessionList();
+    });
+    list.appendChild(item);
+  }
+}
+
+function formatRelativeTime(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  const min = 60 * 1000, hr = 60 * min, day = 24 * hr;
+  if (diff < min) return "just now";
+  if (diff < hr) return Math.floor(diff / min) + "m ago";
+  if (diff < day) return Math.floor(diff / hr) + "h ago";
+  if (diff < 7 * day) return Math.floor(diff / day) + "d ago";
+  return new Date(ts).toLocaleDateString();
+}
+
+function rerenderActiveChat() {
+  const chat = shadow.getElementById("aip-chat");
+  if (!chat) return;
+  chat.innerHTML = "";
+  if (!chatHistory.length) {
+    const empty = document.createElement("div");
+    empty.className = "aip-empty";
+    empty.id = "aip-empty";
+    empty.innerHTML = `
+      <div class="aip-empty-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
+      </div>
+      <div class="aip-empty-title">AI Assistant</div>
+      <div class="aip-empty-desc">Ask anything, draft messages, brainstorm, debug code.</div>
+    `;
+    chat.appendChild(empty);
+    return;
+  }
+  for (const msg of chatHistory) {
+    if (msg.role === "user") addOverlayMsg(msg.content, "user", { skipSave: true });
+    else if (msg.role === "assistant") addOverlayMsg(msg.content, "ai", { skipSave: true });
+  }
+}
+
+function openSidebar() {
+  const sb = shadow.getElementById("aip-sidebar");
+  if (!sb) return;
+  renderSessionList();
+  sb.classList.add("open");
+}
+
+function closeSidebar() {
+  const sb = shadow.getElementById("aip-sidebar");
+  if (sb) sb.classList.remove("open");
+}
+
+function setupCrossTabSync() {
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (!changes[SESSIONS_KEY]) return;
+      const next = changes[SESSIONS_KEY].newValue;
+      if (!next || !Array.isArray(next.sessions)) return;
+      sessions = next.sessions;
+      const stillActive = sessions.find((s) => s.id === activeSessionId);
+      if (stillActive) {
+        chatHistory = stillActive.messages;
+      } else if (sessions.length) {
+        setActiveSession(sessions[0].id);
+      } else {
+        createNewSession();
+      }
+      rerenderActiveChat();
+      renderSessionList();
+    });
+  } catch (e) {
+    // ignore — chrome.storage.onChanged may not exist in some contexts
+  }
+}
+
+async function initFloatingUI() {
   if (overlayHost) return;
 
   overlayHost = document.createElement("div");
@@ -195,10 +440,13 @@ function initFloatingUI() {
   style.textContent = getOverlayCSS();
   shadow.appendChild(style);
 
-  // FAB button
+  // FAB button - minimal pill style like WhisperFlow
   const fab = document.createElement("button");
   fab.id = "aip-fab";
-  fab.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>`;
+  fab.innerHTML = `
+    <span class="aip-fab-dot"></span>
+    <svg class="aip-fab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+  `;
   fab.title = "AI Chat (Alt+Shift+O)";
   fab.addEventListener("click", () => togglePanel());
   shadow.appendChild(fab);
@@ -213,6 +461,11 @@ function initFloatingUI() {
 
   setupPanelEvents();
   makeFabDraggable(fab);
+
+  await loadSessionsFromStorage();
+  rerenderActiveChat();
+  renderSessionList();
+  setupCrossTabSync();
 }
 
 function togglePanel() {
@@ -238,15 +491,33 @@ function toggleOverlay() {
 
 function getPanelHTML() {
   return `
+    <div class="aip-sidebar" id="aip-sidebar">
+      <div class="aip-sidebar-header">
+        <span class="aip-sidebar-title">Chats</span>
+        <button class="aip-hdr-btn" id="aip-sidebar-close" title="Close history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <button class="aip-new-chat-btn" id="aip-new-chat">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New chat
+      </button>
+      <div class="aip-session-list" id="aip-session-list"></div>
+    </div>
+    <div class="aip-sidebar-scrim" id="aip-sidebar-scrim"></div>
+
     <div class="aip-header">
       <div class="aip-header-left">
+        <button class="aip-hdr-btn" id="aip-history" title="Chat history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
         <div class="aip-logo">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
         </div>
         <span class="aip-title">Softerra Proposal Bot</span>
       </div>
       <div class="aip-header-actions">
-        <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear chat">
+        <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear current chat">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
         </button>
         <button class="aip-hdr-btn" id="aip-close" title="Close (Alt+Shift+O)">
@@ -288,21 +559,40 @@ function getPanelHTML() {
 function setupPanelEvents() {
   shadow.getElementById("aip-close").addEventListener("click", togglePanel);
 
+  // Clear current chat = empty active session's messages, keep session in list
   shadow.getElementById("aip-clear-chat").addEventListener("click", () => {
-    chatHistory = [];
-    const chat = shadow.getElementById("aip-chat");
-    chat.innerHTML = "";
-    const empty = document.createElement("div");
-    empty.className = "aip-empty";
-    empty.id = "aip-empty";
-    empty.innerHTML = `
-      <div class="aip-empty-icon">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>
-      </div>
-      <div class="aip-empty-title">AI Assistant</div>
-      <div class="aip-empty-desc">Ask anything, draft messages, brainstorm, debug code.</div>
-    `;
-    chat.appendChild(empty);
+    const active = getActiveSession();
+    if (!active) return;
+    active.messages.length = 0;
+    active.title = "New chat";
+    active.updatedAt = Date.now();
+    chatHistory = active.messages;
+    saveSessions();
+    rerenderActiveChat();
+    renderSessionList();
+  });
+
+  // History sidebar toggle
+  shadow.getElementById("aip-history").addEventListener("click", openSidebar);
+  shadow.getElementById("aip-sidebar-close").addEventListener("click", closeSidebar);
+  shadow.getElementById("aip-sidebar-scrim").addEventListener("click", closeSidebar);
+
+  // New chat
+  shadow.getElementById("aip-new-chat").addEventListener("click", () => {
+    // Reuse the existing empty active session if it has no messages
+    const active = getActiveSession();
+    if (active && active.messages.length === 0) {
+      // Already on an empty chat, just close the sidebar
+      closeSidebar();
+      return;
+    }
+    createNewSession();
+    saveSessions();
+    rerenderActiveChat();
+    renderSessionList();
+    closeSidebar();
+    const input = shadow.getElementById("aip-prompt");
+    setTimeout(() => input && input.focus(), 100);
   });
 
   // Send
@@ -390,16 +680,22 @@ async function overlaySendMessage() {
 
     loadingEl.remove();
     addOverlayMsg(result, "ai");
+    touchActiveSession();
+    saveSessions();
+    renderSessionList();
   } catch (error) {
     loadingEl.remove();
-    addOverlayMsg("Error: " + error.message, "error");
+    addOverlayMsg("Error: " + error.message, "error", { skipSave: true });
+    touchActiveSession();
+    saveSessions();
+    renderSessionList();
   } finally {
     overlayProcessing = false;
     shadow.getElementById("aip-send").disabled = false;
   }
 }
 
-function addOverlayMsg(text, type) {
+function addOverlayMsg(text, type, opts = {}) {
   const chat = shadow.getElementById("aip-chat");
   const div = document.createElement("div");
 
@@ -492,9 +788,12 @@ async function retryOverlayMsg(userMessage) {
     });
     loadingEl.remove();
     addOverlayMsg(result, "ai");
+    touchActiveSession();
+    saveSessions();
+    renderSessionList();
   } catch (error) {
     loadingEl.remove();
-    addOverlayMsg("Error: " + error.message, "error");
+    addOverlayMsg("Error: " + error.message, "error", { skipSave: true });
   } finally {
     overlayProcessing = false;
     shadow.getElementById("aip-send").disabled = false;
@@ -512,7 +811,9 @@ async function overlayN8nProposal() {
     return;
   }
 
-  addOverlayMsg("⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : ""), "user");
+  const userSummary = "⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : "");
+  addOverlayMsg(userSummary, "user");
+  chatHistory.push({ role: "user", content: userSummary });
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -540,9 +841,16 @@ async function overlayN8nProposal() {
     });
     loadingEl.remove();
     addOverlayMsg(result, "ai");
+    chatHistory.push({ role: "assistant", content: result });
+    touchActiveSession();
+    saveSessions();
+    renderSessionList();
   } catch (error) {
     loadingEl.remove();
-    addOverlayMsg("Error: " + error.message, "error");
+    addOverlayMsg("Error: " + error.message, "error", { skipSave: true });
+    touchActiveSession();
+    saveSessions();
+    renderSessionList();
   } finally {
     overlayProcessing = false;
     shadow.getElementById("aip-send").disabled = false;
@@ -647,8 +955,9 @@ function makeFabDraggable(fab) {
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
     if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDragged = true;
-    const newLeft = Math.max(0, Math.min(window.innerWidth - 56, startLeft + dx));
-    const newTop = Math.max(0, Math.min(window.innerHeight - 56, startTop + dy));
+    const rect = fab.getBoundingClientRect();
+    const newLeft = Math.max(0, Math.min(window.innerWidth - rect.width, startLeft + dx));
+    const newTop = Math.max(0, Math.min(window.innerHeight - rect.height, startTop + dy));
     fab.style.right = "auto";
     fab.style.bottom = "auto";
     fab.style.left = newLeft + "px";
@@ -678,33 +987,54 @@ function getOverlayCSS() {
   return `
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* ---- FAB ---- */
+    /* ---- FAB (transparent, WhisperFlow-style pill) ---- */
     #aip-fab {
       position: fixed;
-      bottom: 24px;
-      right: 24px;
+      bottom: 28px;
+      right: 28px;
       z-index: 2147483646;
-      width: 75px;
-      height: 75px;
-      border-radius: 50%;
-      border: none;
-      background: linear-gradient(135deg, #7c83ff, #6a5aff);
-      color: #fff;
+      height: 38px;
+      min-width: 38px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(20, 20, 28, 0.45);
+      backdrop-filter: blur(14px) saturate(160%);
+      -webkit-backdrop-filter: blur(14px) saturate(160%);
+      color: rgba(255, 255, 255, 0.85);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 20px rgba(108, 99, 255, 0.4), 0 2px 8px rgba(0,0,0,0.3);
-      transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+      gap: 8px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+      user-select: none;
+    }
+    #aip-fab .aip-fab-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #7c83ff;
+      box-shadow: 0 0 8px rgba(124, 131, 255, 0.7);
+      flex-shrink: 0;
+    }
+    #aip-fab .aip-fab-icon {
+      opacity: 0.85;
+      flex-shrink: 0;
     }
     #aip-fab:hover {
-      transform: scale(1.1);
-      box-shadow: 0 6px 28px rgba(108, 99, 255, 0.5), 0 3px 12px rgba(0,0,0,0.3);
+      background: rgba(28, 28, 40, 0.65);
+      border-color: rgba(255, 255, 255, 0.22);
+      transform: translateY(-1px);
+    }
+    #aip-fab:active {
+      transform: translateY(0);
     }
     #aip-fab.hidden {
       opacity: 0;
       pointer-events: none;
-      transform: scale(0.5);
+      transform: scale(0.85);
     }
 
     /* ---- Panel ---- */
@@ -737,6 +1067,134 @@ function getOverlayCSS() {
       opacity: 1;
       pointer-events: auto;
     }
+
+    /* ---- Sidebar (chat history) ---- */
+    .aip-sidebar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 260px;
+      background: #0a0a14;
+      border-right: 1px solid #1f1f3a;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(-100%);
+      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 4px 0 24px rgba(0,0,0,0.35);
+    }
+    .aip-sidebar.open {
+      transform: translateX(0);
+    }
+    .aip-sidebar-scrim {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.35);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 4;
+    }
+    .aip-sidebar.open ~ .aip-sidebar-scrim {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .aip-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid #1f1f3a;
+      flex-shrink: 0;
+    }
+    .aip-sidebar-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #aaa;
+    }
+    .aip-new-chat-btn {
+      margin: 10px 12px;
+      padding: 9px 12px;
+      background: linear-gradient(135deg, #7c83ff, #6a5aff);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .aip-new-chat-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .aip-new-chat-btn:active { transform: translateY(0); }
+
+    .aip-session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 8px 12px;
+    }
+    .aip-session-list::-webkit-scrollbar { width: 4px; }
+    .aip-session-list::-webkit-scrollbar-thumb { background: #2a2a4a; border-radius: 4px; }
+
+    .aip-session-empty {
+      padding: 24px 12px;
+      color: #555;
+      font-size: 12px;
+      text-align: center;
+    }
+    .aip-session-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      margin: 2px 0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s;
+      color: #ccc;
+    }
+    .aip-session-item:hover { background: #14142a; }
+    .aip-session-item.active { background: #1a1a3a; }
+    .aip-session-meta {
+      flex: 1;
+      min-width: 0;
+    }
+    .aip-session-title {
+      font-size: 13px;
+      color: #e2e2ef;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+    .aip-session-time {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .aip-session-del {
+      width: 24px; height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: #555;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.12s, background 0.12s, color 0.12s;
+      flex-shrink: 0;
+    }
+    .aip-session-item:hover .aip-session-del { opacity: 1; }
+    .aip-session-del:hover { background: #2a1414; color: #fb7185; }
 
     /* ---- Header ---- */
     .aip-header {
