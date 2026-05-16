@@ -182,6 +182,7 @@ function showNotification(message, type = "info") {
 let overlayHost = null;
 let shadow = null;
 let overlayProcessing = false;
+let pendingAttachments = []; // {name, mediaType, data (base64), kind: 'image'|'document'|'text', textContent?}
 
 // --- Session storage model ---
 // sessions: [{ id, title, createdAt, updatedAt, messages: [{role, content}] }]
@@ -208,7 +209,10 @@ function getActiveSession() {
 function deriveTitle(messages) {
   const firstUser = messages.find((m) => m.role === "user");
   if (!firstUser) return "New chat";
-  return firstUser.content.replace(/\s+/g, " ").trim().slice(0, 48) || "New chat";
+  const textContent = typeof firstUser.content === "string"
+    ? firstUser.content
+    : renderMsgContent(firstUser.content);
+  return textContent.replace(/\s+/g, " ").trim().slice(0, 48) || "New chat";
 }
 
 function touchActiveSession() {
@@ -220,7 +224,27 @@ function touchActiveSession() {
 
 function saveSessions() {
   try {
-    chrome.storage.local.set({ [SESSIONS_KEY]: { sessions, activeSessionId } });
+    // Strip base64 file data from saved history (image/document blocks)
+    // so chrome.storage.local quota (10MB) doesn't fill up. The in-memory
+    // chatHistory still has the full data for the current turn.
+    const slim = sessions.map((s) => ({
+      ...s,
+      messages: s.messages.map((m) => {
+        if (typeof m.content === "string") return m;
+        if (!Array.isArray(m.content)) return m;
+        return {
+          ...m,
+          content: m.content.map((block) => {
+            if (block && (block.type === "image" || block.type === "document")) {
+              const label = block.type === "image" ? "image" : "document";
+              return { type: "text", text: `[Attachment: ${label}]` };
+            }
+            return block;
+          })
+        };
+      })
+    }));
+    chrome.storage.local.set({ [SESSIONS_KEY]: { sessions: slim, activeSessionId } });
   } catch (e) {
     // ignore
   }
@@ -388,9 +412,33 @@ function rerenderActiveChat() {
     return;
   }
   for (const msg of chatHistory) {
-    if (msg.role === "user") addOverlayMsg(msg.content, "user", { skipSave: true });
-    else if (msg.role === "assistant") addOverlayMsg(msg.content, "ai", { skipSave: true });
+    if (msg.role === "user") {
+      const text = msg._displayText !== undefined
+        ? msg._displayText
+        : renderMsgContent(msg.content);
+      addOverlayMsg(text, "user", { skipSave: true, attachments: msg._attachments || [] });
+    } else if (msg.role === "assistant") {
+      const text = renderMsgContent(msg.content);
+      addOverlayMsg(text, "ai", { skipSave: true });
+    }
   }
+}
+
+function renderMsgContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return String(content || "");
+  const parts = [];
+  for (const block of content) {
+    if (!block) continue;
+    if (block.type === "text") {
+      parts.push(block.text);
+    } else if (block.type === "image") {
+      parts.push("📎 [image]");
+    } else if (block.type === "document") {
+      parts.push("📎 [document]");
+    }
+  }
+  return parts.join("\n");
 }
 
 function openSidebar() {
@@ -537,7 +585,12 @@ function getPanelHTML() {
     </div>
 
     <div class="aip-input-area">
+      <div class="aip-attachments" id="aip-attachments"></div>
       <div class="aip-input-row">
+        <button class="aip-attach-btn" id="aip-attach" title="Attach file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <input type="file" id="aip-file-input" accept="image/*,.pdf,.txt,.md,.json,.csv,.log" multiple style="display:none">
         <textarea class="aip-prompt" id="aip-prompt" rows="3" placeholder="Paste client message here, then hit a button below..."></textarea>
         <button class="aip-send-btn" id="aip-send">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -636,6 +689,114 @@ function setupPanelEvents() {
   }, true);
   shadow.getElementById("aip-panel").addEventListener("keyup", (e) => e.stopPropagation(), true);
   shadow.getElementById("aip-panel").addEventListener("keypress", (e) => e.stopPropagation(), true);
+
+  // Attach file button
+  shadow.getElementById("aip-attach").addEventListener("click", () => {
+    shadow.getElementById("aip-file-input").click();
+  });
+
+  // File input change
+  shadow.getElementById("aip-file-input").addEventListener("change", async (e) => {
+    for (const file of e.target.files) {
+      await addAttachment(file);
+    }
+    e.target.value = ""; // allow picking the same file again later
+    renderAttachments();
+  });
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      const base64 = result.split(",")[1]; // strip "data:...;base64,"
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function generateThumbnail(base64, mediaType, maxDim = 240) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const ratio = Math.min(maxDim / img.width, maxDim / img.height, 1);
+      const w = Math.max(1, Math.round(img.width * ratio));
+      const h = Math.max(1, Math.round(img.height * ratio));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      try {
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = `data:${mediaType};base64,${base64}`;
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+async function addAttachment(file) {
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+  if (file.size > MAX_SIZE) {
+    addOverlayMsg(`File "${file.name}" is too large (max 10MB).`, "error", { skipSave: true });
+    return;
+  }
+  try {
+    if (file.type.startsWith("image/")) {
+      const data = await readFileAsBase64(file);
+      const thumb = await generateThumbnail(data, file.type);
+      pendingAttachments.push({ name: file.name, mediaType: file.type, data, thumb, kind: "image" });
+    } else if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+      const data = await readFileAsBase64(file);
+      pendingAttachments.push({ name: file.name, mediaType: "application/pdf", data, kind: "document" });
+    } else {
+      const textContent = await readFileAsText(file);
+      pendingAttachments.push({ name: file.name, kind: "text", textContent });
+    }
+  } catch (err) {
+    addOverlayMsg(`Could not read "${file.name}": ${err.message || err}`, "error", { skipSave: true });
+  }
+}
+
+function renderAttachments() {
+  const container = shadow.getElementById("aip-attachments");
+  if (!container) return;
+  container.innerHTML = "";
+  pendingAttachments.forEach((att, idx) => {
+    const chip = document.createElement("div");
+    chip.className = "aip-attachment-chip" + (att.kind === "image" ? " aip-chip-image" : "");
+
+    const thumb = att.kind === "image"
+      ? `<img class="aip-chip-thumb" src="data:${att.mediaType};base64,${att.data}" alt="">`
+      : `<span class="aip-chip-icon">${att.kind === "document" ? "📄" : "📎"}</span>`;
+
+    chip.innerHTML = `
+      ${thumb}
+      <span class="aip-chip-name">${escHTML(att.name)}</span>
+      <button class="aip-chip-remove" title="Remove">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    `;
+    chip.querySelector(".aip-chip-remove").addEventListener("click", () => {
+      pendingAttachments.splice(idx, 1);
+      renderAttachments();
+    });
+    container.appendChild(chip);
+  });
 }
 
 async function overlaySendMessage() {
@@ -644,9 +805,21 @@ async function overlaySendMessage() {
   const promptEl = shadow.getElementById("aip-prompt");
   const userMessage = promptEl.value.trim();
 
-  if (!userMessage) return;
+  if (!userMessage && pendingAttachments.length === 0) return;
 
-  addOverlayMsg(userMessage, "user");
+  // Snapshot attachments for this send so we can clear pending immediately
+  const attachments = pendingAttachments.slice();
+  pendingAttachments = [];
+  renderAttachments();
+
+  // Build lightweight preview objects (small thumbnails survive saveSessions)
+  const previews = attachments.map((a) => ({
+    name: a.name,
+    kind: a.kind,
+    thumb: a.thumb || null
+  }));
+
+  addOverlayMsg(userMessage, "user", { attachments: previews });
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -658,11 +831,40 @@ async function overlaySendMessage() {
   shadow.getElementById("aip-send").disabled = true;
 
   try {
-    chatHistory.push({ role: "user", content: userMessage });
+    // Build user content — string if no attachments, structured array otherwise
+    let userContent;
+    if (attachments.length === 0) {
+      userContent = userMessage;
+    } else {
+      userContent = [];
+      for (const att of attachments) {
+        if (att.kind === "image") {
+          userContent.push({ type: "image", source: { type: "base64", media_type: att.mediaType, data: att.data }});
+        } else if (att.kind === "document") {
+          userContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: att.data }});
+        } else if (att.kind === "text") {
+          userContent.push({ type: "text", text: `[File: ${att.name}]\n${att.textContent}` });
+        }
+      }
+      if (userMessage) {
+        userContent.push({ type: "text", text: userMessage });
+      }
+    }
+
+    chatHistory.push({
+      role: "user",
+      content: userContent,
+      // display-only metadata (preserved by saveSessions via spread, ignored by API)
+      _displayText: userMessage,
+      _attachments: previews
+    });
+
+    // For the API call, strip our private display fields so we don't leak them
+    const apiMessages = chatHistory.map(({ role, content }) => ({ role, content }));
 
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "chat-api", messages: chatHistory },
+        { action: "chat-api", messages: apiMessages },
         (response) => {
           if (chrome.runtime.lastError) {
             chatHistory.pop();
@@ -701,7 +903,18 @@ function addOverlayMsg(text, type, opts = {}) {
 
   if (type === "user") {
     div.className = "aip-msg aip-msg-user";
-    div.innerHTML = `<div class="aip-msg-label">You</div><div class="aip-msg-text">${escHTML(text)}</div>`;
+    const attachments = opts.attachments || [];
+    const attHTML = attachments.map((a) => {
+      if (a.kind === "image" && a.thumb) {
+        return `<img class="aip-msg-preview-img" src="${a.thumb}" alt="${escHTML(a.name)}" title="${escHTML(a.name)}">`;
+      }
+      const icon = a.kind === "document" ? "📄" : "📎";
+      return `<div class="aip-msg-preview-file">${icon} ${escHTML(a.name)}</div>`;
+    }).join("");
+    const previewsBlock = attHTML ? `<div class="aip-msg-previews">${attHTML}</div>` : "";
+    const hasText = text && String(text).trim();
+    const textBlock = hasText ? `<div class="aip-msg-text">${escHTML(text)}</div>` : "";
+    div.innerHTML = `<div class="aip-msg-label">You</div>${previewsBlock}${textBlock}`;
   } else if (type === "ai") {
     const hasProposal = /PROPOSAL:|Hook Options|Suggested Price|Red Flag|ADDITIONAL NOTES/i.test(text);
     div.className = "aip-msg aip-msg-ai";
@@ -771,9 +984,10 @@ async function retryOverlayMsg(userMessage) {
 
   try {
     chatHistory.push({ role: "user", content: userMessage });
+    const apiMessages = chatHistory.map(({ role, content }) => ({ role, content }));
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "chat-api", messages: chatHistory },
+        { action: "chat-api", messages: apiMessages },
         (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -1300,6 +1514,38 @@ function getOverlayCSS() {
       margin-bottom: 4px;
       color: #555;
     }
+
+    .aip-msg-previews {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .aip-msg-preview-img {
+      max-width: 220px;
+      max-height: 220px;
+      border-radius: 10px;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+      border: 1px solid #2a2a4a;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .aip-msg-preview-img:hover {
+      transform: scale(1.02);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .aip-msg-preview-file {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid #2a2a4a;
+      padding: 5px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #ccc;
+    }
     .aip-msg-ai .aip-msg-label { color: #7c83ff; }
     .aip-error-label { color: #fb7185 !important; }
     .aip-msg-text { color: #ddd; }
@@ -1413,6 +1659,78 @@ function getOverlayCSS() {
     }
     .aip-send-btn:hover { opacity: 0.85; }
     .aip-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .aip-attach-btn {
+      width: 38px; height: 38px;
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      color: #888;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+    .aip-attach-btn:hover { border-color: #7c83ff; color: #fff; }
+
+    .aip-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .aip-attachments:empty { display: none; }
+    .aip-attachment-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px 4px 10px;
+      background: #1a1a3a;
+      border: 1px solid #2a2a4a;
+      border-radius: 14px;
+      font-size: 12px;
+      color: #ccc;
+      max-width: 240px;
+    }
+    .aip-attachment-chip.aip-chip-image {
+      padding: 4px 6px 4px 4px;
+    }
+    .aip-attachment-chip .aip-chip-thumb {
+      width: 36px;
+      height: 36px;
+      object-fit: cover;
+      border-radius: 8px;
+      flex-shrink: 0;
+      background: #0a0a14;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    .aip-attachment-chip .aip-chip-thumb:hover {
+      transform: scale(1.05);
+    }
+    .aip-attachment-chip .aip-chip-icon {
+      font-size: 14px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .aip-attachment-chip .aip-chip-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .aip-attachment-chip .aip-chip-remove {
+      background: transparent;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .aip-attachment-chip .aip-chip-remove:hover { background: #2a1414; color: #fb7185; }
 
     .aip-quick {
       display: flex;
