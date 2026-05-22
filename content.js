@@ -197,6 +197,7 @@ const LEGACY_CHAT_KEY = "aip_chat_history_v1";
 let sessions = [];
 let activeSessionId = null;
 let chatHistory = [];
+let currentTheme = "dark";
 
 function newSessionId() {
   return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -477,6 +478,21 @@ function setupCrossTabSync() {
   }
 }
 
+function applyTheme(theme) {
+  currentTheme = theme;
+  const panel = shadow && shadow.getElementById("aip-panel");
+  if (panel) panel.setAttribute("data-theme", theme);
+  try { chrome.storage.local.set({ aip_theme: theme }); } catch(e) {}
+}
+
+function loadTheme() {
+  try {
+    chrome.storage.local.get("aip_theme", (r) => {
+      if (r && r.aip_theme) applyTheme(r.aip_theme);
+    });
+  } catch(e) {}
+}
+
 async function initFloatingUI() {
   if (overlayHost) return;
 
@@ -514,6 +530,7 @@ async function initFloatingUI() {
   rerenderActiveChat();
   renderSessionList();
   setupCrossTabSync();
+  loadTheme();
 }
 
 function togglePanel() {
@@ -565,6 +582,10 @@ function getPanelHTML() {
         <span class="aip-title">Softerra Proposal Bot</span>
       </div>
       <div class="aip-header-actions">
+        <button class="aip-hdr-btn" id="aip-theme-toggle" title="Toggle light/dark mode">
+          <svg class="aip-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="aip-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
         <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear current chat">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
         </button>
@@ -598,12 +619,7 @@ function getPanelHTML() {
       </div>
       <div class="aip-quick" id="aip-quick">
         <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
-        <button class="aip-qbtn aip-analyze-btn" data-p="Analyze this client message. Break down: what they are asking for, what is clear, what is unclear or missing, and what questions I should ask them before starting.">Analyze</button>
-        <button class="aip-qbtn aip-reply-btn" data-p="Write a short, natural reply to this client message. Keep it concise, human, and direct. No fluff, no AI-sounding language. Just a real response I can copy and send.">Write Reply</button>
-        <button class="aip-qbtn" data-p="Improve this text. Fix grammar, clean up the flow, make it sound more professional but still natural. Keep my original meaning, do not add new content.">Improve</button>
-        <button class="aip-qbtn" data-p="Write a short follow-up message to this client. Keep it brief, friendly, and action-oriented. Just a nudge, not a paragraph.">Follow up</button>
-        <button class="aip-qbtn aip-status-btn" data-p="This is a work report I did for a client. Summarize it into a short, human client message. Extract only what was done, merge similar items into one bullet, keep each point to one line. Start with a casual greeting using the client name if found. End with a line saying details and screenshots are in the doc. Sound like a real person, not AI. No fluff, no filler.">Status Update</button>
-        <button class="aip-qbtn aip-tasks-btn" data-p="Extract actionable tasks from this client chat. For each task: numbered, short technical title, tag in brackets: [Implementation], [Investigate], [Planning], [Urgent], [Question]. Add one short line of context only if the task is not obvious. Keep the client's exact technical details (URLs, file names, app names, specific requirements). Do not add client quotes. Do not explain why. Just list the tasks, concise and technical.">Create Tasks</button>
+        <button class="aip-qbtn aip-send-plain-btn" id="aip-send-plain">Send</button>
       </div>
     </div>
   `;
@@ -656,18 +672,12 @@ function setupPanelEvents() {
     overlayN8nProposal();
   });
 
-  // Quick actions — prepend instruction to whatever's in the input
-  shadow.querySelectorAll(".aip-qbtn:not(.aip-n8n-btn)").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const promptEl = shadow.getElementById("aip-prompt");
-      const content = promptEl.value.trim();
-      if (content) {
-        promptEl.value = btn.dataset.p + "\n\n" + content;
-      } else {
-        promptEl.value = btn.dataset.p;
-      }
-      overlaySendMessage();
-    });
+  // Send plain — same as arrow send button
+  shadow.getElementById("aip-send-plain").addEventListener("click", overlaySendMessage);
+
+  // Theme toggle
+  shadow.getElementById("aip-theme-toggle").addEventListener("click", () => {
+    applyTheme(currentTheme === "dark" ? "light" : "dark");
   });
 
   // Auto-resize prompt
@@ -778,19 +788,28 @@ function renderAttachments() {
   container.innerHTML = "";
   pendingAttachments.forEach((att, idx) => {
     const chip = document.createElement("div");
-    chip.className = "aip-attachment-chip" + (att.kind === "image" ? " aip-chip-image" : "");
-
-    const thumb = att.kind === "image"
-      ? `<img class="aip-chip-thumb" src="data:${att.mediaType};base64,${att.data}" alt="">`
-      : `<span class="aip-chip-icon">${att.kind === "document" ? "📄" : "📎"}</span>`;
-
-    chip.innerHTML = `
-      ${thumb}
-      <span class="aip-chip-name">${escHTML(att.name)}</span>
-      <button class="aip-chip-remove" title="Remove">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-      </button>
-    `;
+    if (att.kind === "image") {
+      chip.className = "aip-attachment-chip aip-chip-image-preview";
+      const imgSrc = att.thumb
+        ? `data:image/jpeg;base64,${att.thumb}`
+        : `data:${att.mediaType};base64,${att.data}`;
+      chip.innerHTML = `
+        <img class="aip-chip-preview-img" src="${imgSrc}" alt="${escHTML(att.name)}">
+        <button class="aip-chip-remove aip-chip-remove-overlay" title="Remove">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+        <span class="aip-chip-preview-name">${escHTML(att.name)}</span>
+      `;
+    } else {
+      chip.className = "aip-attachment-chip";
+      chip.innerHTML = `
+        <span class="aip-chip-icon">${att.kind === "document" ? "📄" : "📎"}</span>
+        <span class="aip-chip-name">${escHTML(att.name)}</span>
+        <button class="aip-chip-remove" title="Remove">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      `;
+    }
     chip.querySelector(".aip-chip-remove").addEventListener("click", () => {
       pendingAttachments.splice(idx, 1);
       renderAttachments();
@@ -1137,7 +1156,8 @@ function renderMD(text) {
   html = html.replace(/^- \[ \] (.+)$/gm, '<div class="aip-md-check">$1</div>');
   html = html.replace(/^- (.+)$/gm, '<div class="aip-md-li">$1</div>');
   html = html.replace(/^\d+\.[ ]?(.+)$/gm, '<div class="aip-md-li aip-md-ol">$1</div>');
-  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a class="aip-md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a class="aip-md-link" href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/(https?:\/\/[^\s<"]+)/g, '<a class="aip-md-link" href="$1" target="_blank" rel="noopener">$1</a>');
   html = html.replace(/\n/g, '<br>');
 
   return html;
@@ -1201,7 +1221,57 @@ function getOverlayCSS() {
   return `
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* ---- FAB (transparent, WhisperFlow-style pill) ---- */
+    /* ========== CSS VARIABLES — dark mode (default) ========== */
+    #aip-panel {
+      --bg:          #212121;
+      --bg-raised:   #2f2f2f;
+      --bg-sidebar:  #171717;
+      --bg-header:   #212121;
+      --bg-input:    #2f2f2f;
+      --bg-hover:    #3a3a3a;
+      --bg-user:     #303030;
+      --border:      #3a3a3a;
+      --border-med:  #4a4a4a;
+      --text:        #ececec;
+      --text-dim:    #c4c4c4;
+      --text-muted:  #888;
+      --accent:      #7c83ff;
+      --accent-soft: rgba(124,131,255,0.12);
+      --amber:       #f59e0b;
+      --amber-soft:  rgba(245,158,11,0.12);
+      --danger:      #fb7185;
+      --success:     #4ade80;
+    }
+
+    /* ========== CSS VARIABLES — light mode ========== */
+    #aip-panel[data-theme="light"] {
+      --bg:          #ffffff;
+      --bg-raised:   #f5f5f5;
+      --bg-sidebar:  #efefef;
+      --bg-header:   #ffffff;
+      --bg-input:    #f0f0f0;
+      --bg-hover:    #e4e4e4;
+      --bg-user:     #e8e8fc;
+      --border:      #e0e0e0;
+      --border-med:  #cccccc;
+      --text:        #1a1a1a;
+      --text-dim:    #444444;
+      --text-muted:  #888888;
+      --accent:      #5a5fcf;
+      --accent-soft: rgba(90,95,207,0.1);
+      --amber:       #b45309;
+      --amber-soft:  rgba(180,83,9,0.1);
+      --danger:      #dc2626;
+      --success:     #16a34a;
+    }
+
+    /* ---- Theme toggle icons ---- */
+    #aip-panel .aip-icon-sun  { display: block; }
+    #aip-panel .aip-icon-moon { display: none; }
+    #aip-panel[data-theme="light"] .aip-icon-sun  { display: none; }
+    #aip-panel[data-theme="light"] .aip-icon-moon { display: block; }
+
+    /* ---- FAB ---- */
     #aip-fab {
       position: fixed;
       bottom: 28px;
@@ -1211,128 +1281,103 @@ function getOverlayCSS() {
       min-width: 38px;
       padding: 0 12px;
       border-radius: 999px;
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      background: rgba(20, 20, 28, 0.45);
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(20,20,28,0.55);
       backdrop-filter: blur(14px) saturate(160%);
       -webkit-backdrop-filter: blur(14px) saturate(160%);
-      color: rgba(255, 255, 255, 0.85);
+      color: rgba(255,255,255,0.85);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-      transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+      transition: background 0.18s, border-color 0.18s, transform 0.18s, opacity 0.18s;
       user-select: none;
     }
     #aip-fab .aip-fab-dot {
-      width: 7px;
-      height: 7px;
+      width: 7px; height: 7px;
       border-radius: 50%;
       background: #7c83ff;
-      box-shadow: 0 0 8px rgba(124, 131, 255, 0.7);
+      box-shadow: 0 0 8px rgba(124,131,255,0.7);
       flex-shrink: 0;
     }
-    #aip-fab .aip-fab-icon {
-      opacity: 0.85;
-      flex-shrink: 0;
-    }
-    #aip-fab:hover {
-      background: rgba(28, 28, 40, 0.65);
-      border-color: rgba(255, 255, 255, 0.22);
-      transform: translateY(-1px);
-    }
-    #aip-fab:active {
-      transform: translateY(0);
-    }
-    #aip-fab.hidden {
-      opacity: 0;
-      pointer-events: none;
-      transform: scale(0.85);
-    }
+    #aip-fab .aip-fab-icon { opacity: 0.85; flex-shrink: 0; }
+    #aip-fab:hover { background: rgba(28,28,40,0.75); border-color: rgba(255,255,255,0.22); transform: translateY(-1px); }
+    #aip-fab:active { transform: translateY(0); }
+    #aip-fab.hidden { opacity: 0; pointer-events: none; transform: scale(0.85); }
 
-    /* ---- Panel ---- */
+    /* ---- Panel shell ---- */
     #aip-panel {
       position: fixed;
       bottom: 24px;
       right: 24px;
       z-index: 2147483647;
       width: 90%;
-      max-width: 900px;
+      max-width: 860px;
       height: 90%;
       max-height: 700px;
-      background: #0c0c18;
-      border: 1px solid #1f1f3a;
-      border-radius: 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 12px 48px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.3);
+      box-shadow: 0 16px 56px rgba(0,0,0,0.45), 0 4px 16px rgba(0,0,0,0.25);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      color: #e2e2ef;
-      transform: scale(0.8) translateY(20px);
+      color: var(--text);
+      transform: scale(0.85) translateY(16px);
       opacity: 0;
       pointer-events: none;
-      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s;
+      transition: transform 0.25s cubic-bezier(0.16,1,0.3,1), opacity 0.2s, background 0.2s, color 0.2s;
       transform-origin: bottom right;
     }
-    #aip-panel.open {
-      transform: scale(1) translateY(0);
-      opacity: 1;
-      pointer-events: auto;
-    }
+    #aip-panel.open { transform: scale(1) translateY(0); opacity: 1; pointer-events: auto; }
 
-    /* ---- Sidebar (chat history) ---- */
+    /* ---- Sidebar ---- */
     .aip-sidebar {
       position: absolute;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      width: 260px;
-      background: #0a0a14;
-      border-right: 1px solid #1f1f3a;
+      top: 0; left: 0; bottom: 0;
+      width: 256px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
       z-index: 5;
       display: flex;
       flex-direction: column;
       transform: translateX(-100%);
-      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 4px 0 24px rgba(0,0,0,0.35);
+      transition: transform 0.22s cubic-bezier(0.16,1,0.3,1);
+      box-shadow: 4px 0 20px rgba(0,0,0,0.25);
     }
-    .aip-sidebar.open {
-      transform: translateX(0);
-    }
+    .aip-sidebar.open { transform: translateX(0); }
     .aip-sidebar-scrim {
       position: absolute;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.35);
+      background: rgba(0,0,0,0.3);
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s;
       z-index: 4;
     }
-    .aip-sidebar.open ~ .aip-sidebar-scrim {
-      opacity: 1;
-      pointer-events: auto;
-    }
+    .aip-sidebar.open ~ .aip-sidebar-scrim { opacity: 1; pointer-events: auto; }
     .aip-sidebar-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 12px 14px;
-      border-bottom: 1px solid #1f1f3a;
+      border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
     .aip-sidebar-title {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.6px;
-      color: #aaa;
+      letter-spacing: 0.7px;
+      color: var(--text-muted);
     }
     .aip-new-chat-btn {
       margin: 10px 12px;
       padding: 9px 12px;
-      background: linear-gradient(135deg, #7c83ff, #6a5aff);
+      background: var(--accent);
       color: #fff;
       border: none;
       border-radius: 8px;
@@ -1346,7 +1391,7 @@ function getOverlayCSS() {
       gap: 6px;
       transition: opacity 0.15s, transform 0.15s;
     }
-    .aip-new-chat-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .aip-new-chat-btn:hover { opacity: 0.88; transform: translateY(-1px); }
     .aip-new-chat-btn:active { transform: translateY(0); }
 
     .aip-session-list {
@@ -1354,12 +1399,12 @@ function getOverlayCSS() {
       overflow-y: auto;
       padding: 4px 8px 12px;
     }
-    .aip-session-list::-webkit-scrollbar { width: 4px; }
-    .aip-session-list::-webkit-scrollbar-thumb { background: #2a2a4a; border-radius: 4px; }
+    .aip-session-list::-webkit-scrollbar { width: 3px; }
+    .aip-session-list::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 3px; }
 
     .aip-session-empty {
       padding: 24px 12px;
-      color: #555;
+      color: var(--text-muted);
       font-size: 12px;
       text-align: center;
     }
@@ -1372,17 +1417,14 @@ function getOverlayCSS() {
       border-radius: 8px;
       cursor: pointer;
       transition: background 0.12s;
-      color: #ccc;
+      color: var(--text-dim);
     }
-    .aip-session-item:hover { background: #14142a; }
-    .aip-session-item.active { background: #1a1a3a; }
-    .aip-session-meta {
-      flex: 1;
-      min-width: 0;
-    }
+    .aip-session-item:hover { background: var(--bg-hover); }
+    .aip-session-item.active { background: var(--accent-soft); }
+    .aip-session-meta { flex: 1; min-width: 0; }
     .aip-session-title {
       font-size: 13px;
-      color: #e2e2ef;
+      color: var(--text);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1390,7 +1432,7 @@ function getOverlayCSS() {
     }
     .aip-session-time {
       font-size: 11px;
-      color: #666;
+      color: var(--text-muted);
       margin-top: 2px;
     }
     .aip-session-del {
@@ -1398,7 +1440,7 @@ function getOverlayCSS() {
       background: transparent;
       border: none;
       border-radius: 6px;
-      color: #555;
+      color: var(--text-muted);
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -1408,67 +1450,56 @@ function getOverlayCSS() {
       flex-shrink: 0;
     }
     .aip-session-item:hover .aip-session-del { opacity: 1; }
-    .aip-session-del:hover { background: #2a1414; color: #fb7185; }
+    .aip-session-del:hover { background: rgba(251,113,133,0.15); color: var(--danger); }
 
     /* ---- Header ---- */
     .aip-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 14px;
-      border-bottom: 1px solid #1f1f3a;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
       flex-shrink: 0;
-      background: #0e0e1c;
+      background: var(--bg-header);
     }
-    .aip-header-left {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
+    .aip-header-left { display: flex; align-items: center; gap: 8px; }
     .aip-logo {
-      width: 28px; height: 28px;
-      background: linear-gradient(135deg, #7c83ff, #b44aff);
-      border-radius: 8px;
+      width: 26px; height: 26px;
+      background: var(--accent);
+      border-radius: 7px;
       display: flex;
       align-items: center;
       justify-content: center;
       color: #fff;
     }
-    .aip-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: #fff;
-    }
-    .aip-header-actions {
-      display: flex;
-      gap: 4px;
-    }
+    .aip-title { font-size: 13px; font-weight: 700; color: var(--text); }
+    .aip-header-actions { display: flex; gap: 2px; }
     .aip-hdr-btn {
       width: 30px; height: 30px;
       border: none;
       background: transparent;
-      color: #666;
-      border-radius: 6px;
+      color: var(--text-muted);
+      border-radius: 7px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.15s;
+      transition: background 0.15s, color 0.15s;
     }
-    .aip-hdr-btn:hover { background: #1a1a2e; color: #ccc; }
+    .aip-hdr-btn:hover { background: var(--bg-hover); color: var(--text); }
 
     /* ---- Chat area ---- */
     .aip-chat {
       flex: 1;
       overflow-y: auto;
-      padding: 14px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
     }
     .aip-chat::-webkit-scrollbar { width: 4px; }
     .aip-chat::-webkit-scrollbar-track { background: transparent; }
-    .aip-chat::-webkit-scrollbar-thumb { background: #2a2a4a; border-radius: 4px; }
+    .aip-chat::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 4px; }
 
     .aip-empty {
       flex: 1;
@@ -1477,43 +1508,49 @@ function getOverlayCSS() {
       align-items: center;
       justify-content: center;
       gap: 10px;
-      color: #444;
       text-align: center;
     }
-    .aip-empty-icon { color: #555; }
-    .aip-empty-title { font-size: 14px; font-weight: 600; color: #777; }
-    .aip-empty-desc { font-size: 12px; color: #555; line-height: 1.5; }
+    .aip-empty-icon { color: var(--text-muted); }
+    .aip-empty-title { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+    .aip-empty-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 
     /* ---- Messages ---- */
     .aip-msg {
-      padding: 10px 13px;
-      border-radius: 12px;
-      font-size: 18px;
-      line-height: 1.55;
-      max-width: 90%;
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 88%;
       word-wrap: break-word;
-      white-space: pre-wrap;
     }
     .aip-msg-user {
-      background: #1e1e3a;
-      border: 1px solid #2a2a50;
-      align-self: flex-end;
+      padding: 10px 14px;
+      border-radius: 18px;
       border-bottom-right-radius: 4px;
+      background: var(--bg-user);
+      border: 1px solid var(--border);
+      align-self: flex-end;
+      color: var(--text);
+      white-space: pre-wrap;
     }
     .aip-msg-ai {
-      background: #12122a;
-      border: 1px solid #1f1f3a;
       align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      padding: 4px 2px;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      white-space: pre-wrap;
+      max-width: 96%;
     }
     .aip-msg-label {
       font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin-bottom: 4px;
-      color: #555;
+      margin-bottom: 5px;
+      color: var(--text-muted);
     }
+    .aip-msg-ai .aip-msg-label { color: var(--accent); }
+    .aip-error-label { color: var(--danger) !important; }
+    .aip-msg-text { color: var(--text-dim); }
 
     .aip-msg-previews {
       display: flex;
@@ -1522,85 +1559,76 @@ function getOverlayCSS() {
       margin-bottom: 6px;
     }
     .aip-msg-preview-img {
-      max-width: 220px;
-      max-height: 220px;
+      max-width: 200px;
+      max-height: 200px;
       border-radius: 10px;
       object-fit: cover;
       cursor: pointer;
       display: block;
-      border: 1px solid #2a2a4a;
+      border: 1px solid var(--border);
       transition: transform 0.15s, box-shadow 0.15s;
     }
-    .aip-msg-preview-img:hover {
-      transform: scale(1.02);
-      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-    }
+    .aip-msg-preview-img:hover { transform: scale(1.02); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
     .aip-msg-preview-file {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid #2a2a4a;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
       padding: 5px 12px;
       border-radius: 8px;
       font-size: 12px;
-      color: #ccc;
+      color: var(--text-dim);
     }
-    .aip-msg-ai .aip-msg-label { color: #7c83ff; }
-    .aip-error-label { color: #fb7185 !important; }
-    .aip-msg-text { color: #ddd; }
 
     .aip-msg-actions {
       display: flex;
-      gap: 8px;
-      margin-top: 12px;
+      gap: 6px;
+      margin-top: 10px;
       padding-top: 10px;
-      border-top: 1px solid #1f1f3a;
+      border-top: 1px solid var(--border);
     }
     .aip-action-btn {
-      background: #14142a;
-      border: 1px solid #2a2a4a;
-      border-radius: 8px;
-      color: #999;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--text-muted);
       font-size: 12px;
-      padding: 7px 14px;
+      padding: 6px 12px;
       cursor: pointer;
       font-family: inherit;
-      transition: all 0.2s;
+      transition: all 0.18s;
       display: flex;
       align-items: center;
       gap: 5px;
     }
-    .aip-action-btn:hover { background: #1e1e3a; border-color: #7c83ff; color: #fff; transform: translateY(-1px); }
+    .aip-action-btn:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
     .aip-action-btn:active { transform: translateY(0); }
-    .aip-action-btn.copied { background: #0d3320; border-color: #166534; color: #4ade80; }
+    .aip-action-btn.copied { background: rgba(74,222,128,0.1); border-color: var(--success); color: var(--success); }
     .aip-copy-proposal-btn {
-      background: linear-gradient(135deg, #2a1a00, #1a1a2e);
-      border-color: #f59e0b;
-      color: #f59e0b;
+      background: var(--amber-soft);
+      border-color: var(--amber);
+      color: var(--amber);
       font-weight: 600;
     }
     .aip-copy-proposal-btn:hover {
-      background: linear-gradient(135deg, #3a2500, #2a2a4a);
-      border-color: #fbbf24;
-      color: #fbbf24;
-      box-shadow: 0 2px 12px rgba(245, 158, 11, 0.15);
+      background: rgba(245,158,11,0.2);
+      border-color: var(--amber);
+      color: var(--amber);
+      box-shadow: 0 2px 10px rgba(245,158,11,0.15);
     }
-    .aip-copy-proposal-btn.copied { background: #0d3320; border-color: #166534; color: #4ade80; }
+    .aip-copy-proposal-btn.copied { background: rgba(74,222,128,0.1); border-color: var(--success); color: var(--success); }
 
-    /* ---- Loading ---- */
+    /* ---- Loading indicator ---- */
     .aip-loading {
-      background: #12122a;
-      border: 1px solid #1f1f3a;
       align-self: flex-start;
-      border-radius: 12px;
       display: flex;
-      gap: 6px;
-      padding: 13px 18px;
+      gap: 5px;
+      padding: 12px 16px;
     }
     .aip-dot {
-      width: 7px; height: 7px;
-      background: #7c83ff;
+      width: 6px; height: 6px;
+      background: var(--accent);
       border-radius: 50%;
       animation: aip-bounce 1.4s infinite;
     }
@@ -1613,42 +1641,146 @@ function getOverlayCSS() {
 
     /* ---- Input area ---- */
     .aip-input-area {
-      padding: 10px 12px;
-      border-top: 1px solid #1f1f3a;
+      padding: 10px 12px 12px;
+      border-top: 1px solid var(--border);
       flex-shrink: 0;
-      background: #0e0e1c;
+      background: var(--bg-header);
     }
+    .aip-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .aip-attachments:empty { display: none; }
 
+    /* File chip (non-image) */
+    .aip-attachment-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px 4px 10px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      font-size: 12px;
+      color: var(--text-dim);
+      max-width: 220px;
+    }
+    .aip-attachment-chip .aip-chip-icon { font-size: 14px; line-height: 1; flex-shrink: 0; }
+    .aip-attachment-chip .aip-chip-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .aip-attachment-chip .aip-chip-remove {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px;
+      display: flex;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .aip-attachment-chip .aip-chip-remove:hover { background: rgba(251,113,133,0.15); color: var(--danger); }
+
+    /* Image preview chip */
+    .aip-chip-image-preview {
+      position: relative;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg-raised);
+      width: 100px;
+    }
+    .aip-chip-preview-img {
+      width: 100px;
+      height: 80px;
+      object-fit: cover;
+      display: block;
+    }
+    .aip-chip-preview-name {
+      font-size: 10px;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      width: 100%;
+      text-align: center;
+    }
+    .aip-chip-remove-overlay {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.55);
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .aip-chip-remove-overlay:hover { background: rgba(220,38,38,0.75); }
+
+    /* Unified input row */
     .aip-input-row {
       display: flex;
-      gap: 7px;
       align-items: flex-end;
+      gap: 0;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 4px 6px 4px 4px;
+      transition: border-color 0.15s;
     }
+    .aip-input-row:focus-within { border-color: var(--accent); }
+
+    .aip-attach-btn {
+      width: 34px; height: 34px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    .aip-attach-btn:hover { background: var(--bg-hover); color: var(--text); }
 
     .aip-prompt {
       flex: 1;
-      padding: 10px 12px;
-      background: #1a1a2e;
-      border: 1px solid #2a2a4a;
-      border-radius: 10px;
-      color: #fff;
-      font-size: 13px;
+      padding: 7px 8px;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 14px;
       font-family: inherit;
       resize: none;
       outline: none;
-      min-height: 70px;
-      max-height: 150px;
+      min-height: 36px;
+      max-height: 140px;
       overflow-y: auto;
-      transition: border-color 0.15s;
+      line-height: 1.5;
     }
-    .aip-prompt:focus { border-color: #7c83ff; }
-    .aip-prompt::placeholder { color: #555; }
+    .aip-prompt::placeholder { color: var(--text-muted); }
 
     .aip-send-btn {
-      width: 38px; height: 38px;
-      background: linear-gradient(135deg, #7c83ff, #6a5aff);
+      width: 34px; height: 34px;
+      background: var(--accent);
       border: none;
-      border-radius: 10px;
+      border-radius: 8px;
       color: #fff;
       cursor: pointer;
       display: flex;
@@ -1658,126 +1790,77 @@ function getOverlayCSS() {
       transition: opacity 0.15s;
     }
     .aip-send-btn:hover { opacity: 0.85; }
-    .aip-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .aip-send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-    .aip-attach-btn {
-      width: 38px; height: 38px;
-      background: #1a1a2e;
-      border: 1px solid #2a2a4a;
-      border-radius: 10px;
-      color: #888;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: all 0.15s;
-    }
-    .aip-attach-btn:hover { border-color: #7c83ff; color: #fff; }
-
-    .aip-attachments {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 6px;
-    }
-    .aip-attachments:empty { display: none; }
-    .aip-attachment-chip {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 6px 4px 10px;
-      background: #1a1a3a;
-      border: 1px solid #2a2a4a;
-      border-radius: 14px;
-      font-size: 12px;
-      color: #ccc;
-      max-width: 240px;
-    }
-    .aip-attachment-chip.aip-chip-image {
-      padding: 4px 6px 4px 4px;
-    }
-    .aip-attachment-chip .aip-chip-thumb {
-      width: 36px;
-      height: 36px;
-      object-fit: cover;
-      border-radius: 8px;
-      flex-shrink: 0;
-      background: #0a0a14;
-      cursor: pointer;
-      transition: transform 0.15s;
-    }
-    .aip-attachment-chip .aip-chip-thumb:hover {
-      transform: scale(1.05);
-    }
-    .aip-attachment-chip .aip-chip-icon {
-      font-size: 14px;
-      line-height: 1;
-      flex-shrink: 0;
-    }
-    .aip-attachment-chip .aip-chip-name {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .aip-attachment-chip .aip-chip-remove {
-      background: transparent;
-      border: none;
-      color: #888;
-      cursor: pointer;
-      padding: 2px;
-      display: flex;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .aip-attachment-chip .aip-chip-remove:hover { background: #2a1414; color: #fb7185; }
-
+    /* ---- Quick actions ---- */
     .aip-quick {
       display: flex;
-      gap: 5px;
+      gap: 6px;
       margin-top: 8px;
       flex-wrap: wrap;
     }
     .aip-qbtn {
-      background: #14142a;
-      border: 1px solid #1f1f3a;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
       border-radius: 20px;
-      color: #888;
+      color: var(--text-muted);
       font-size: 12px;
-      padding: 6px 14px;
+      padding: 5px 14px;
       cursor: pointer;
       font-family: inherit;
-      transition: all 0.2s;
+      transition: all 0.18s;
     }
-    .aip-qbtn:hover { border-color: #7c83ff; color: #ccc; transform: translateY(-1px); }
+    .aip-qbtn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
     .aip-qbtn:active { transform: translateY(0); }
-    .aip-n8n-btn { background: linear-gradient(135deg, #2a1a00, #1a1a2e); border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
-    .aip-n8n-btn:hover { background: linear-gradient(135deg, #3a2500, #2a2a4a); border-color: #fbbf24; color: #fbbf24; box-shadow: 0 2px 10px rgba(245, 158, 11, 0.15); }
-    .aip-analyze-btn { border-color: #38bdf8; color: #38bdf8; font-weight: 600; }
-    .aip-analyze-btn:hover { border-color: #7dd3fc; color: #7dd3fc; box-shadow: 0 2px 10px rgba(56, 189, 248, 0.15); }
-    .aip-reply-btn { border-color: #4ade80; color: #4ade80; font-weight: 600; }
-    .aip-reply-btn:hover { border-color: #86efac; color: #86efac; box-shadow: 0 2px 10px rgba(74, 222, 128, 0.15); }
-    .aip-status-btn { border-color: #c084fc; color: #c084fc; font-weight: 600; }
-    .aip-status-btn:hover { border-color: #d8b4fe; color: #d8b4fe; box-shadow: 0 2px 10px rgba(192, 132, 252, 0.15); }
-    .aip-tasks-btn { border-color: #fb923c; color: #fb923c; font-weight: 600; }
-    .aip-tasks-btn:hover { border-color: #fdba74; color: #fdba74; box-shadow: 0 2px 10px rgba(251, 146, 60, 0.15); }
 
-    /* Markdown rendering */
+    .aip-n8n-btn {
+      background: var(--amber-soft);
+      border-color: var(--amber);
+      color: var(--amber);
+      font-weight: 600;
+    }
+    .aip-n8n-btn:hover {
+      background: rgba(245,158,11,0.2);
+      border-color: var(--amber);
+      color: var(--amber);
+      box-shadow: 0 2px 10px rgba(245,158,11,0.15);
+    }
+    .aip-send-plain-btn {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .aip-send-plain-btn:hover {
+      background: rgba(124,131,255,0.2);
+      border-color: var(--accent);
+      color: var(--accent);
+      box-shadow: 0 2px 10px rgba(124,131,255,0.15);
+    }
+
+    /* ---- Markdown ---- */
     .aip-md { white-space: normal; }
-    .aip-md-h { font-size: 14px; font-weight: 700; color: #fff; margin: 10px 0 6px; }
-    .aip-md h4.aip-md-h { font-size: 13px; }
-    .aip-md-code { background: #1a1a3a; border: 1px solid #2a2a4a; border-radius: 4px; padding: 1px 5px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #f59e0b; }
-    .aip-md-hr { border: none; border-top: 1px solid #2a2a4a; margin: 10px 0; }
+    .aip-md-h { font-size: 14px; font-weight: 700; color: var(--text); margin: 10px 0 5px; }
+    .aip-md-code {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--amber);
+    }
+    .aip-md-hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
     .aip-md-li { padding-left: 14px; position: relative; margin: 2px 0; }
-    .aip-md-li::before { content: "•"; position: absolute; left: 2px; color: #7c83ff; }
-    .aip-md-ol::before { content: counter(ol-counter) "."; counter-increment: ol-counter; color: #7c83ff; }
+    .aip-md-li::before { content: "•"; position: absolute; left: 2px; color: var(--accent); }
+    .aip-md-ol::before { content: counter(ol-counter) "."; counter-increment: ol-counter; color: var(--accent); }
     .aip-md-check { padding-left: 20px; position: relative; margin: 2px 0; }
-    .aip-md-check::before { content: "☐"; position: absolute; left: 2px; color: #666; }
-    .aip-md-check.done::before { content: "☑"; color: #4ade80; }
-    .aip-md-link { color: #7c83ff; text-decoration: none; word-break: break-all; }
-    .aip-md-link:hover { text-decoration: underline; color: #9da3ff; }
-    .aip-md strong { color: #fff; }
-    .aip-md em { color: #ccc; font-style: italic; }
+    .aip-md-check::before { content: "☐"; position: absolute; left: 2px; color: var(--text-muted); }
+    .aip-md-check.done::before { content: "☑"; color: var(--success); }
+    .aip-md-link { color: var(--accent); text-decoration: none; word-break: break-all; }
+    .aip-md-link:hover { text-decoration: underline; }
+    .aip-md strong { color: var(--text); font-weight: 600; }
+    .aip-md em { color: var(--text-dim); font-style: italic; }
   `;
 }
 
