@@ -4,6 +4,8 @@
 
 let chatHistory = [];
 let isProcessing = false;
+let proposals = []; // [{ jobPost, proposal }] — max 10, saved in chrome.storage.local
+const MAX_PROPOSALS = 10;
 
 // ---- Init ----
 document.addEventListener("DOMContentLoaded", () => {
@@ -43,6 +45,20 @@ document.addEventListener("DOMContentLoaded", () => {
     sendN8nProposal();
   });
 
+  // ---- Winning Proposals manager ----
+  chrome.storage.local.get(["winningProposals"], (result) => {
+    proposals = Array.isArray(result.winningProposals) ? result.winningProposals : [];
+    renderProposals();
+  });
+
+  document.getElementById("addProposalBtn").addEventListener("click", () => {
+    if (proposals.length >= MAX_PROPOSALS) return;
+    proposals.push({ jobPost: "", proposal: "" });
+    renderProposals();
+  });
+
+  document.getElementById("saveProposalsBtn").addEventListener("click", saveProposals);
+
   // Quick action buttons — prepend instruction to whatever's in the input
   document.querySelectorAll(".quick-btn:not(.n8n-btn)").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -72,6 +88,65 @@ function saveSettings() {
 
   chrome.storage.sync.set({ apiKey, customPrompt, n8nWebhookUrl }, () => {
     const status = document.getElementById("saveStatus");
+    status.style.display = "block";
+    setTimeout(() => { status.style.display = "none"; }, 2000);
+  });
+}
+
+// ---- Winning Proposals: render, edit, delete ----
+function renderProposals() {
+  const list = document.getElementById("proposalsList");
+  const empty = document.getElementById("proposalsEmpty");
+  const count = document.getElementById("propCount");
+  const addBtn = document.getElementById("addProposalBtn");
+
+  count.textContent = `(${proposals.length}/${MAX_PROPOSALS})`;
+  addBtn.disabled = proposals.length >= MAX_PROPOSALS;
+  empty.style.display = proposals.length === 0 ? "block" : "none";
+
+  list.innerHTML = "";
+  proposals.forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "prop-card";
+    card.innerHTML = `
+      <div class="prop-card-head">
+        <span class="prop-card-num">Proposal ${i + 1}</span>
+        <button class="prop-del-btn" data-index="${i}">✕ Remove</button>
+      </div>
+      <label class="prop-field-label">Job Post / Job Type</label>
+      <textarea class="prop-textarea job" data-index="${i}" data-field="jobPost" placeholder="Paste the job post or describe the job type (e.g. Shopify theme customization, speed optimization)...">${escapeHtml(p.jobPost || "")}</textarea>
+      <label class="prop-field-label">Winning Proposal</label>
+      <textarea class="prop-textarea body" data-index="${i}" data-field="proposal" placeholder="Paste the proposal you sent that won this job...">${escapeHtml(p.proposal || "")}</textarea>
+    `;
+    list.appendChild(card);
+  });
+
+  // Keep in-memory state in sync as the user types
+  list.querySelectorAll(".prop-textarea").forEach(ta => {
+    ta.addEventListener("input", () => {
+      const idx = Number(ta.dataset.index);
+      const field = ta.dataset.field;
+      if (proposals[idx]) proposals[idx][field] = ta.value;
+    });
+  });
+
+  list.querySelectorAll(".prop-del-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.index);
+      proposals.splice(idx, 1);
+      renderProposals();
+    });
+  });
+}
+
+function saveProposals() {
+  // Drop fully-empty entries before saving
+  const cleaned = proposals.filter(p => (p.jobPost || "").trim() || (p.proposal || "").trim());
+  proposals = cleaned;
+
+  chrome.storage.local.set({ winningProposals: cleaned }, () => {
+    renderProposals();
+    const status = document.getElementById("proposalsSaveStatus");
     status.style.display = "block";
     setTimeout(() => { status.style.display = "none"; }, 2000);
   });
@@ -278,10 +353,14 @@ async function sendN8nProposal() {
   isProcessing = true;
   document.getElementById("sendBtn").disabled = true;
 
+  // Pull the saved winning proposals to send along for AI matching
+  const { winningProposals } = await chrome.storage.local.get(["winningProposals"]);
+  const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
+
   try {
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "n8n-proposal", text: jobDescription },
+        { action: "n8n-proposal", text: jobDescription, winningProposals: savedProposals },
         (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));

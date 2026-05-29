@@ -182,6 +182,8 @@ function showNotification(message, type = "info") {
 let overlayHost = null;
 let shadow = null;
 let overlayProcessing = false;
+let overlayProposals = []; // [{ jobPost, proposal }] — shared with popup via chrome.storage.local
+const OVERLAY_MAX_PROPOSALS = 10;
 let pendingAttachments = []; // {name, mediaType, data (base64), kind: 'image'|'document'|'text', textContent?}
 
 // --- Session storage model ---
@@ -582,6 +584,9 @@ function getPanelHTML() {
         <span class="aip-title">Softerra Proposal Bot</span>
       </div>
       <div class="aip-header-actions">
+        <button class="aip-hdr-btn" id="aip-proposals-btn" title="Manage winning proposals">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+        </button>
         <button class="aip-hdr-btn" id="aip-theme-toggle" title="Toggle light/dark mode">
           <svg class="aip-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="aip-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -620,6 +625,27 @@ function getPanelHTML() {
       <div class="aip-quick" id="aip-quick">
         <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
         <button class="aip-qbtn aip-send-plain-btn" id="aip-send-plain">Send</button>
+      </div>
+    </div>
+
+    <div class="aip-prop-modal" id="aip-prop-modal">
+      <div class="aip-prop-box">
+        <div class="aip-prop-head">
+          <span class="aip-prop-title">Winning Proposals <span id="aip-prop-count">(0/10)</span></span>
+          <div class="aip-prop-head-actions">
+            <button class="aip-prop-add" id="aip-prop-add">+ Add</button>
+            <button class="aip-hdr-btn" id="aip-prop-close" title="Close">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="aip-prop-hint">Save your best winning proposals here. When you hit Generate Proposal, the AI reads the job and picks the closest matches as style references. Saved on this device and shared with the toolbar popup.</div>
+        <div class="aip-prop-list" id="aip-prop-list"></div>
+        <div class="aip-prop-empty" id="aip-prop-empty">No winning proposals yet. Click <strong>+ Add</strong> to save your first one.</div>
+        <div class="aip-prop-foot">
+          <button class="aip-prop-save" id="aip-prop-save">Save Proposals</button>
+          <span class="aip-prop-saved" id="aip-prop-saved">✓ Saved</span>
+        </div>
       </div>
     </div>
   `;
@@ -672,6 +698,16 @@ function setupPanelEvents() {
     overlayN8nProposal();
   });
 
+  // Winning Proposals manager
+  shadow.getElementById("aip-proposals-btn").addEventListener("click", openProposalsModal);
+  shadow.getElementById("aip-prop-close").addEventListener("click", closeProposalsModal);
+  shadow.getElementById("aip-prop-add").addEventListener("click", () => {
+    if (overlayProposals.length >= OVERLAY_MAX_PROPOSALS) return;
+    overlayProposals.push({ jobPost: "", proposal: "" });
+    renderProposalsModal();
+  });
+  shadow.getElementById("aip-prop-save").addEventListener("click", saveProposalsFromModal);
+
   // Send plain — same as arrow send button
   shadow.getElementById("aip-send-plain").addEventListener("click", overlaySendMessage);
 
@@ -690,7 +726,13 @@ function setupPanelEvents() {
   shadow.getElementById("aip-panel").addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      togglePanel();
+      // If the proposals modal is open, close just the modal first
+      const propModal = shadow.getElementById("aip-prop-modal");
+      if (propModal && propModal.classList.contains("open")) {
+        closeProposalsModal();
+      } else {
+        togglePanel();
+      }
     } else if (e.key === "Enter" && !e.shiftKey && e.target.id === "aip-prompt") {
       e.preventDefault();
       overlaySendMessage();
@@ -921,7 +963,7 @@ function addOverlayMsg(text, type, opts = {}) {
   const div = document.createElement("div");
 
   if (type === "user") {
-    div.className = "aip-msg aip-msg-user";
+    div.className = "aip-msg-user-wrap";
     const attachments = opts.attachments || [];
     const attHTML = attachments.map((a) => {
       if (a.kind === "image" && a.thumb) {
@@ -933,7 +975,56 @@ function addOverlayMsg(text, type, opts = {}) {
     const previewsBlock = attHTML ? `<div class="aip-msg-previews">${attHTML}</div>` : "";
     const hasText = text && String(text).trim();
     const textBlock = hasText ? `<div class="aip-msg-text">${escHTML(text)}</div>` : "";
-    div.innerHTML = `<div class="aip-msg-label">You</div>${previewsBlock}${textBlock}`;
+    div.innerHTML = `
+      <div class="aip-msg aip-msg-user">
+        <div class="aip-msg-label">You</div>${previewsBlock}${textBlock}
+      </div>
+      <div class="aip-user-actions">
+        <button class="aip-uaction-btn aip-u-retry" title="Retry — send this again">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+        </button>
+        <button class="aip-uaction-btn aip-u-edit" title="Edit — load back into the input box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+        </button>
+        <button class="aip-uaction-btn aip-u-copy" title="Copy">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </div>
+    `;
+
+    // Use the full text (for proposals the bubble only shows a short preview)
+    const fullText = (opts.fullText !== undefined && opts.fullText !== null) ? opts.fullText : text;
+    const isProposal = opts.kind === "proposal";
+    const setInput = (val) => {
+      const input = shadow.getElementById("aip-prompt");
+      input.value = val;
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 150) + "px";
+      return input;
+    };
+
+    div.querySelector(".aip-u-copy").addEventListener("click", function() {
+      navigator.clipboard.writeText(fullText).then(() => {
+        const prev = this.innerHTML;
+        this.classList.add("copied");
+        this.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
+        setTimeout(() => { this.innerHTML = prev; this.classList.remove("copied"); }, 1500);
+      });
+    });
+
+    div.querySelector(".aip-u-edit").addEventListener("click", () => {
+      setInput(fullText).focus();
+    });
+
+    div.querySelector(".aip-u-retry").addEventListener("click", () => {
+      if (overlayProcessing) return;
+      setInput(fullText);
+      if (isProposal) {
+        overlayN8nProposal();
+      } else {
+        overlaySendMessage();
+      }
+    });
   } else if (type === "ai") {
     const hasProposal = /PROPOSAL:|Hook Options|Suggested Price|Red Flag|ADDITIONAL NOTES/i.test(text);
     div.className = "aip-msg aip-msg-ai";
@@ -1033,6 +1124,76 @@ async function retryOverlayMsg(userMessage) {
   }
 }
 
+// ---- Winning Proposals manager (overlay) ----
+function openProposalsModal() {
+  // Always load the latest saved set so edits made in the popup show up here too
+  chrome.storage.local.get(["winningProposals"], (result) => {
+    overlayProposals = Array.isArray(result.winningProposals) ? result.winningProposals : [];
+    renderProposalsModal();
+    shadow.getElementById("aip-prop-modal").classList.add("open");
+  });
+}
+
+function closeProposalsModal() {
+  shadow.getElementById("aip-prop-modal").classList.remove("open");
+}
+
+function renderProposalsModal() {
+  const list = shadow.getElementById("aip-prop-list");
+  const empty = shadow.getElementById("aip-prop-empty");
+  const count = shadow.getElementById("aip-prop-count");
+  const addBtn = shadow.getElementById("aip-prop-add");
+
+  count.textContent = `(${overlayProposals.length}/${OVERLAY_MAX_PROPOSALS})`;
+  addBtn.disabled = overlayProposals.length >= OVERLAY_MAX_PROPOSALS;
+  empty.style.display = overlayProposals.length === 0 ? "block" : "none";
+
+  list.innerHTML = "";
+  overlayProposals.forEach((p, i) => {
+    const card = document.createElement("div");
+    card.className = "aip-prop-card";
+    card.innerHTML = `
+      <div class="aip-prop-card-head">
+        <span class="aip-prop-card-num">Proposal ${i + 1}</span>
+        <button class="aip-prop-del" data-index="${i}">✕ Remove</button>
+      </div>
+      <label class="aip-prop-flabel">Job Post / Job Type</label>
+      <textarea class="aip-prop-ta job" data-index="${i}" data-field="jobPost" placeholder="Paste the job post or describe the job type (e.g. Shopify speed optimization)...">${escHTML(p.jobPost || "")}</textarea>
+      <label class="aip-prop-flabel">Winning Proposal</label>
+      <textarea class="aip-prop-ta body" data-index="${i}" data-field="proposal" placeholder="Paste the proposal you sent that won this job...">${escHTML(p.proposal || "")}</textarea>
+    `;
+    list.appendChild(card);
+  });
+
+  list.querySelectorAll(".aip-prop-ta").forEach(ta => {
+    ta.addEventListener("input", () => {
+      const idx = Number(ta.dataset.index);
+      const field = ta.dataset.field;
+      if (overlayProposals[idx]) overlayProposals[idx][field] = ta.value;
+    });
+  });
+
+  list.querySelectorAll(".aip-prop-del").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.index);
+      overlayProposals.splice(idx, 1);
+      renderProposalsModal();
+    });
+  });
+}
+
+function saveProposalsFromModal() {
+  const cleaned = overlayProposals.filter(p => (p.jobPost || "").trim() || (p.proposal || "").trim());
+  overlayProposals = cleaned;
+
+  chrome.storage.local.set({ winningProposals: cleaned }, () => {
+    renderProposalsModal();
+    const saved = shadow.getElementById("aip-prop-saved");
+    saved.classList.add("show");
+    setTimeout(() => saved.classList.remove("show"), 2000);
+  });
+}
+
 async function overlayN8nProposal() {
   if (overlayProcessing) return;
 
@@ -1045,8 +1206,8 @@ async function overlayN8nProposal() {
   }
 
   const userSummary = "⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : "");
-  addOverlayMsg(userSummary, "user");
-  chatHistory.push({ role: "user", content: userSummary });
+  addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal" });
+  chatHistory.push({ role: "user", content: userSummary, _displayText: userSummary, _fullText: jobDescription, _kind: "proposal" });
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -1057,10 +1218,14 @@ async function overlayN8nProposal() {
   overlayProcessing = true;
   shadow.getElementById("aip-send").disabled = true;
 
+  // Pull the saved winning proposals so the AI can pick the closest matches
+  const { winningProposals } = await chrome.storage.local.get(["winningProposals"]);
+  const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
+
   try {
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "n8n-proposal", text: jobDescription },
+        { action: "n8n-proposal", text: jobDescription, winningProposals: savedProposals },
         (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -1487,6 +1652,160 @@ function getOverlayCSS() {
       transition: background 0.15s, color 0.15s;
     }
     .aip-hdr-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+    /* ---- Proposals modal ---- */
+    .aip-prop-modal {
+      position: absolute;
+      inset: 0;
+      z-index: 8;
+      background: rgba(0,0,0,0.45);
+      display: none;
+      align-items: stretch;
+      justify-content: center;
+      padding: 0;
+    }
+    .aip-prop-modal.open { display: flex; }
+    .aip-prop-box {
+      width: 100%;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .aip-prop-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .aip-prop-title { font-size: 14px; font-weight: 700; color: var(--text); }
+    #aip-prop-count { color: var(--text-muted); font-weight: 600; font-size: 12px; }
+    .aip-prop-head-actions { display: flex; align-items: center; gap: 8px; }
+    .aip-prop-add {
+      background: var(--amber-soft);
+      border: 1px solid var(--amber);
+      color: var(--amber);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .aip-prop-add:hover { opacity: 0.82; }
+    .aip-prop-add:disabled { opacity: 0.4; cursor: not-allowed; }
+    .aip-prop-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      padding: 12px 16px 4px;
+      flex-shrink: 0;
+    }
+    .aip-prop-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 16px;
+    }
+    .aip-prop-list::-webkit-scrollbar { width: 4px; }
+    .aip-prop-list::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 4px; }
+    .aip-prop-empty {
+      display: none;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 28px 16px;
+      line-height: 1.6;
+    }
+    .aip-prop-card {
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .aip-prop-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .aip-prop-card-num {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .aip-prop-del {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: inherit;
+      transition: background 0.12s, color 0.12s;
+    }
+    .aip-prop-del:hover { background: rgba(251,113,133,0.15); color: var(--danger); }
+    .aip-prop-flabel {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 8px 0 4px;
+    }
+    .aip-prop-ta {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .aip-prop-ta:focus { border-color: var(--accent); }
+    .aip-prop-ta.job { min-height: 46px; }
+    .aip-prop-ta.body { min-height: 92px; }
+    .aip-prop-foot {
+      flex-shrink: 0;
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .aip-prop-save {
+      flex: 1;
+      padding: 10px;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .aip-prop-save:hover { opacity: 0.88; }
+    .aip-prop-saved {
+      font-size: 13px;
+      color: var(--success);
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .aip-prop-saved.show { opacity: 1; }
 
     /* ---- Chat area ---- */
     .aip-chat {

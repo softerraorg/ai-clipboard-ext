@@ -279,6 +279,69 @@
     .md-content strong { color: #fff; }
     .md-content em { color: #ccc; font-style: italic; }
 
+    /* ---- Proposals Tab ---- */
+    .prop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .prop-add-btn {
+      background: linear-gradient(135deg, #2a1a00, #1a1a2e);
+      border: 1px solid #f59e0b;
+      border-radius: 8px;
+      color: #f59e0b;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .prop-add-btn:hover { background: linear-gradient(135deg, #3a2500, #2a2a4a); border-color: #fbbf24; color: #fbbf24; }
+    .prop-add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .prop-hint { font-size: 11px; color: #666; line-height: 1.6; margin-bottom: 14px; }
+
+    .prop-card {
+      background: #12122a;
+      border: 1px solid #1f1f3a;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .prop-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .prop-card-num { font-size: 11px; font-weight: 700; color: #7c83ff; text-transform: uppercase; letter-spacing: 0.5px; }
+    .prop-del-btn {
+      background: none;
+      border: none;
+      color: #666;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .prop-del-btn:hover { color: #fb7185; background: #2a1620; }
+    .prop-field-label { display: block; font-size: 10px; font-weight: 700; color: #888; margin: 8px 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .prop-textarea {
+      width: 100%;
+      padding: 8px 10px;
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .prop-textarea:focus { border-color: #7c83ff; }
+    .prop-textarea.job { min-height: 48px; }
+    .prop-textarea.body { min-height: 90px; }
+    .prop-empty { text-align: center; color: #555; padding: 24px 12px; }
+    .prop-empty p { font-size: 12px; line-height: 1.6; margin-top: 8px; }
+
     /* ---- Settings & Shortcuts ---- */
     .panel-content { padding: 16px; overflow-y: auto; flex: 1; }
 
@@ -397,6 +460,7 @@
 
   <div class="tabs">
     <button class="tab active" data-tab="chat">Chat</button>
+    <button class="tab" data-tab="proposals">Proposals</button>
     <button class="tab" data-tab="shortcuts">Shortcuts</button>
     <button class="tab" data-tab="settings">Settings</button>
   </div>
@@ -427,6 +491,27 @@
         <button class="quick-btn status-btn" data-prompt="This is a work report I did for a client. Summarize it into a short, human client message. Extract only what was done, merge similar items into one bullet, keep each point to one line. Start with a casual greeting using the client name if found. End with a line saying details and screenshots are in the doc. Sound like a real person, not AI. No fluff, no filler.">Status Update</button>
         <button class="quick-btn tasks-btn" data-prompt="Extract actionable tasks from this client chat. For each task: numbered, short technical title, tag in brackets: [Implementation], [Investigate], [Planning], [Urgent], [Question]. Add one short line of context only if the task is not obvious. Keep the client's exact technical details (URLs, file names, app names, specific requirements). Do not add client quotes. Do not explain why. Just list the tasks, concise and technical.">Create Tasks</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Proposals Tab -->
+  <div class="tab-content" id="tab-proposals">
+    <div class="panel-content">
+      <div class="prop-head">
+        <div class="section-label" style="margin-bottom:0;">Winning Proposals <span id="propCount">(0/10)</span></div>
+        <button class="prop-add-btn" id="addProposalBtn">+ Add</button>
+      </div>
+      <p class="prop-hint">Save your best winning proposals here. When you generate a proposal, the AI reads the job post and picks the closest matches as style references. Stored on this device only.</p>
+
+      <div id="proposalsList"></div>
+
+      <div class="prop-empty" id="proposalsEmpty">
+        <div class="empty-state-icon">📝</div>
+        <p>No winning proposals yet.<br>Click <strong>+ Add</strong> to save your first one.</p>
+      </div>
+
+      <button class="save-btn" id="saveProposalsBtn" style="margin-top:14px;">Save Proposals</button>
+      <div class="save-status" id="proposalsSaveStatus">✓ Saved!</div>
     </div>
   </div>
 
