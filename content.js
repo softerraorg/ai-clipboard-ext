@@ -414,12 +414,13 @@ function rerenderActiveChat() {
     chat.appendChild(empty);
     return;
   }
-  for (const msg of chatHistory) {
+  for (let i = 0; i < chatHistory.length; i++) {
+    const msg = chatHistory[i];
     if (msg.role === "user") {
       const text = msg._displayText !== undefined
         ? msg._displayText
         : renderMsgContent(msg.content);
-      addOverlayMsg(text, "user", { skipSave: true, attachments: msg._attachments || [] });
+      addOverlayMsg(text, "user", { skipSave: true, attachments: msg._attachments || [], fullText: msg._fullText, kind: msg._kind, histIndex: i });
     } else if (msg.role === "assistant") {
       const text = renderMsgContent(msg.content);
       addOverlayMsg(text, "ai", { skipSave: true });
@@ -613,14 +614,16 @@ function getPanelHTML() {
     <div class="aip-input-area">
       <div class="aip-attachments" id="aip-attachments"></div>
       <div class="aip-input-row">
-        <button class="aip-attach-btn" id="aip-attach" title="Attach file">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-        </button>
         <input type="file" id="aip-file-input" accept="image/*,.pdf,.txt,.md,.json,.csv,.log" multiple style="display:none">
         <textarea class="aip-prompt" id="aip-prompt" rows="3" placeholder="Paste client message here, then hit a button below..."></textarea>
-        <button class="aip-send-btn" id="aip-send">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
+        <div class="aip-input-controls">
+          <button class="aip-attach-btn" id="aip-attach" title="Attach file">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <button class="aip-send-btn" id="aip-send">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
       </div>
       <div class="aip-quick" id="aip-quick">
         <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
@@ -880,7 +883,7 @@ async function overlaySendMessage() {
     thumb: a.thumb || null
   }));
 
-  addOverlayMsg(userMessage, "user", { attachments: previews });
+  addOverlayMsg(userMessage, "user", { attachments: previews, histIndex: chatHistory.length });
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -1013,7 +1016,7 @@ function addOverlayMsg(text, type, opts = {}) {
     });
 
     div.querySelector(".aip-u-edit").addEventListener("click", () => {
-      setInput(fullText).focus();
+      enterEditMode(div, fullText, isProposal, opts.histIndex);
     });
 
     div.querySelector(".aip-u-retry").addEventListener("click", () => {
@@ -1124,6 +1127,72 @@ async function retryOverlayMsg(userMessage) {
   }
 }
 
+// ---- Inline edit of a sent message (Claude-style) ----
+function enterEditMode(wrapDiv, fullText, isProposal, histIndex) {
+  if (overlayProcessing) return;
+
+  // If we don't know the message's position, fall back to loading it into the input
+  if (histIndex === undefined || histIndex === null) {
+    const input = shadow.getElementById("aip-prompt");
+    input.value = fullText;
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 150) + "px";
+    input.focus();
+    return;
+  }
+
+  const bubble = wrapDiv.querySelector(".aip-msg-user");
+  const actions = wrapDiv.querySelector(".aip-user-actions");
+  if (!bubble) return;
+
+  wrapDiv.classList.add("editing-wrap");
+  if (actions) actions.style.display = "none";
+  bubble.classList.add("editing");
+  bubble.innerHTML = `
+    <textarea class="aip-edit-ta"></textarea>
+    <div class="aip-edit-note">Saving will regenerate the answer from this message.</div>
+    <div class="aip-edit-actions">
+      <button class="aip-edit-cancel">Cancel</button>
+      <button class="aip-edit-save">Save</button>
+    </div>
+  `;
+  const ta = bubble.querySelector(".aip-edit-ta");
+  ta.value = fullText;
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
+  ta.focus();
+  // keep keystrokes inside the overlay; allow newlines with Enter
+  ta.addEventListener("keydown", (e) => { e.stopPropagation(); });
+
+  bubble.querySelector(".aip-edit-cancel").addEventListener("click", () => {
+    rerenderActiveChat();
+  });
+  bubble.querySelector(".aip-edit-save").addEventListener("click", () => {
+    const newText = ta.value.trim();
+    if (!newText) return;
+    saveEdit(histIndex, newText, isProposal);
+  });
+}
+
+function saveEdit(histIndex, newText, isProposal) {
+  if (overlayProcessing) return;
+  // Drop the edited message and everything after it, then regenerate
+  chatHistory.length = Math.max(0, histIndex);
+
+  const input = shadow.getElementById("aip-prompt");
+  input.value = newText;
+  input.style.height = "auto";
+  pendingAttachments = [];
+  renderAttachments();
+  rerenderActiveChat();
+
+  if (isProposal) {
+    overlayN8nProposal();
+  } else {
+    overlaySendMessage();
+  }
+}
+
 // ---- Winning Proposals manager (overlay) ----
 function openProposalsModal() {
   // Always load the latest saved set so edits made in the popup show up here too
@@ -1205,8 +1274,14 @@ async function overlayN8nProposal() {
     return;
   }
 
-  const userSummary = "⚡ Generate Proposal\n" + jobDescription.substring(0, 100) + (jobDescription.length > 100 ? "..." : "");
-  addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal" });
+  // Show the FULL job (no truncation). Collapse runs of blank lines / repeated
+  // spaces so pre-wrap doesn't render big empty gaps; single line breaks are kept.
+  const jobClean = jobDescription
+    .replace(/[ \t]+/g, " ")   // collapse repeated spaces/tabs
+    .replace(/\n{2,}/g, "\n")  // collapse blank lines into one
+    .trim();
+  const userSummary = "⚡ Generate Proposal\n" + jobClean;
+  addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal", histIndex: chatHistory.length });
   chatHistory.push({ role: "user", content: userSummary, _displayText: userSummary, _fullText: jobDescription, _kind: "proposal" });
   promptEl.value = "";
   promptEl.style.height = "auto";
@@ -1811,10 +1886,10 @@ function getOverlayCSS() {
     .aip-chat {
       flex: 1;
       overflow-y: auto;
-      padding: 16px;
+      padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 6px;
     }
     .aip-chat::-webkit-scrollbar { width: 4px; }
     .aip-chat::-webkit-scrollbar-track { background: transparent; }
@@ -1848,7 +1923,6 @@ function getOverlayCSS() {
       border: 1px solid var(--border);
       align-self: flex-end;
       color: var(--text);
-      white-space: pre-wrap;
     }
     .aip-msg-ai {
       align-self: flex-start;
@@ -1856,7 +1930,6 @@ function getOverlayCSS() {
       background: transparent;
       border: none;
       color: var(--text);
-      white-space: pre-wrap;
       max-width: 96%;
     }
     .aip-msg-label {
@@ -1864,12 +1937,90 @@ function getOverlayCSS() {
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin-bottom: 5px;
+      margin-bottom: 2px;
       color: var(--text-muted);
     }
     .aip-msg-ai .aip-msg-label { color: var(--accent); }
     .aip-error-label { color: var(--danger) !important; }
     .aip-msg-text { color: var(--text-dim); }
+
+    /* ---- User message + actions (Retry / Edit / Copy) ---- */
+    .aip-msg-user-wrap {
+      align-self: flex-end;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      max-width: 88%;
+      gap: 3px;
+    }
+    .aip-msg-user-wrap .aip-msg-user { max-width: 100%; }
+    .aip-user-actions {
+      display: flex;
+      gap: 1px;
+      padding-right: 2px;
+      opacity: 0.55;
+      transition: opacity 0.15s;
+    }
+    .aip-msg-user-wrap:hover .aip-user-actions { opacity: 1; }
+    .aip-uaction-btn {
+      width: 32px; height: 32px;
+      background: rgba(128, 128, 128, 0.08);
+      border: none;
+      color: var(--text-muted);
+      opacity: 0.5;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      padding: 0;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .aip-uaction-btn:hover {
+      background: rgba(128, 128, 128, 0.2);
+      color: var(--text);
+      opacity: 1;
+      transform: scale(1.1);
+    }
+    .aip-uaction-btn:active { transform: scale(0.92); }
+    .aip-uaction-btn.copied { color: var(--success); opacity: 1; background: rgba(34, 197, 94, 0.15); }
+
+    /* Inline edit mode */
+    .aip-msg-user-wrap.editing-wrap { width: 100%; align-items: stretch; }
+    .aip-msg-user.editing { max-width: 100%; padding: 10px; }
+    .aip-edit-ta {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      padding: 8px 10px;
+      resize: none;
+      outline: none;
+      line-height: 1.5;
+      min-height: 56px;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .aip-edit-note { font-size: 11px; color: var(--text-muted); margin: 7px 2px 0; }
+    .aip-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+    .aip-edit-cancel, .aip-edit-save {
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .aip-edit-cancel { background: transparent; border: 1px solid var(--border-med); color: var(--text-dim); }
+    .aip-edit-cancel:hover { background: var(--bg-hover); color: var(--text); }
+    .aip-edit-save { background: var(--accent); border: 1px solid var(--accent); color: #fff; }
+    .aip-edit-save:hover { opacity: 0.88; }
 
     .aip-msg-previews {
       display: flex;
@@ -2053,30 +2204,46 @@ function getOverlayCSS() {
     /* Unified input row */
     .aip-input-row {
       display: flex;
-      align-items: flex-end;
-      gap: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 2px;
       background: var(--bg-input);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 4px 6px 4px 4px;
+      padding: 6px 8px;
       transition: border-color 0.15s;
     }
     .aip-input-row:focus-within { border-color: var(--accent); }
+    .aip-input-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
 
     .aip-attach-btn {
-      width: 34px; height: 34px;
-      background: transparent;
+      width: 36px; height: 36px;
+      background: rgba(128, 128, 128, 0.12);
       border: none;
-      border-radius: 8px;
+      border-radius: 50%;
       color: var(--text-muted);
+      opacity: 0.55;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      transition: background 0.15s, color 0.15s;
+      transition: all 0.2s ease;
+      padding: 0;
+      -webkit-appearance: none;
+      appearance: none;
     }
-    .aip-attach-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .aip-attach-btn:hover {
+      background: rgba(128, 128, 128, 0.25);
+      color: var(--text);
+      opacity: 1;
+      transform: scale(1.08);
+    }
+    .aip-attach-btn:active { transform: scale(0.92); }
 
     .aip-prompt {
       flex: 1;
@@ -2096,19 +2263,26 @@ function getOverlayCSS() {
     .aip-prompt::placeholder { color: var(--text-muted); }
 
     .aip-send-btn {
-      width: 34px; height: 34px;
+      width: 36px; height: 36px;
       background: var(--accent);
       border: none;
-      border-radius: 8px;
+      border-radius: 50%;
       color: #fff;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      transition: opacity 0.15s;
+      transition: all 0.2s ease;
+      padding: 0;
+      -webkit-appearance: none;
+      appearance: none;
     }
-    .aip-send-btn:hover { opacity: 0.85; }
+    .aip-send-btn:hover {
+      opacity: 0.85;
+      transform: scale(1.08);
+    }
+    .aip-send-btn:active { transform: scale(0.92); }
     .aip-send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
     /* ---- Quick actions ---- */
