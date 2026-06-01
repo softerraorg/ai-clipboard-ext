@@ -134,15 +134,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// Invalidate the ClickUp context cache when its settings change, so toggling
+// the feature or updating the webhook URL takes effect on the next message.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && (changes.clickupContextEnabled || changes.n8nWebhookUrl)) {
+    clickupContextCache = { text: null, fetchedAt: 0 };
+  }
+});
+
+// ClickUp context cache — avoids re-fetching tasks on every message in a
+// conversation. The context is injected into the system prompt, so it rides
+// along every turn anyway; we only need to refresh it occasionally.
+const CLICKUP_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+let clickupContextCache = { text: null, fetchedAt: 0 };
+
+// Fetch ClickUp tasks as a plain-text context block via the same n8n webhook
+// used for proposals. The "mode: clickup" flag routes the request down the
+// ClickUp branch of the workflow, which returns { context: "..." }.
+async function getClickUpContext({ forceRefresh = false } = {}) {
+  const { n8nWebhookUrl } = await chrome.storage.sync.get(["n8nWebhookUrl"]);
+  if (!n8nWebhookUrl) {
+    throw new Error("ClickUp context is on, but no n8n Proposal Bot webhook URL is set in Settings.");
+  }
+
+  const now = Date.now();
+  if (!forceRefresh && clickupContextCache.text && now - clickupContextCache.fetchedAt < CLICKUP_CACHE_TTL_MS) {
+    return clickupContextCache.text;
+  }
+
+  const response = await fetch(n8nWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "sendMessage",
+      mode: "clickup",
+      chatInput: "Return my current ClickUp tasks.",
+      sessionId: "ext-" + now
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`ClickUp webhook error: ${response.status}`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  // Accept a few shapes so it's tolerant of how the n8n workflow is wired.
+  const text = (data.context || data.output || data.text || "").toString().trim();
+  clickupContextCache = { text, fetchedAt: now };
+  return text;
+}
+
 // Chat API - multi-turn conversation with custom system prompt
 async function callChatAPI(messages) {
-  const { apiKey, customPrompt } = await chrome.storage.sync.get(["apiKey", "customPrompt"]);
+  const { apiKey, customPrompt, clickupContextEnabled } = await chrome.storage.sync.get([
+    "apiKey", "customPrompt", "clickupContextEnabled"
+  ]);
 
   if (!apiKey) {
     throw new Error("API key not set. Go to Settings tab to set it.");
   }
 
-  const systemPrompt = customPrompt || `You are Hassan's communication assistant. Hassan is a Top Rated Plus Shopify developer and freelancer on Upwork who also works with clients on Slack, ClickUp, and other platforms.
+  let systemPrompt = customPrompt || `You are Hassan's communication assistant. Hassan is a Top Rated Plus Shopify developer and freelancer on Upwork who also works with clients on Slack, ClickUp, and other platforms.
 
 Rules:
 - Keep replies short and direct. 2-4 sentences max unless more detail is genuinely needed.
@@ -156,6 +208,20 @@ Rules:
 - When writing follow-ups, be brief and action-oriented. One nudge, not a paragraph.
 - When analyzing a client message, break down what they actually want, what is clear, what is unclear, and what to ask them.
 - Write like a real person texting a colleague, not like a customer service bot.`;
+
+  // Context mode: when ON, pull the user's ClickUp tasks and append them to the
+  // system prompt. When OFF, the only context is the chat messages themselves.
+  if (clickupContextEnabled) {
+    try {
+      const clickupContext = await getClickUpContext();
+      if (clickupContext) {
+        systemPrompt += `\n\n# Live ClickUp context\nThe following are the user's current ClickUp tasks. Use them to ground your answers (status updates, what's in progress, follow-ups). Only reference tasks relevant to the user's message; do not dump the whole list.\n\n${clickupContext}`;
+      }
+    } catch (e) {
+      // Don't break chat if ClickUp is unreachable — answer without the context.
+      systemPrompt += `\n\n(Note: ClickUp context was requested but could not be loaded: ${e.message})`;
+    }
+  }
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",

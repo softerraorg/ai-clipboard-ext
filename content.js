@@ -620,9 +620,15 @@ function getPanelHTML() {
           <button class="aip-attach-btn" id="aip-attach" title="Attach file">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
-          <button class="aip-send-btn" id="aip-send">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </button>
+          <div class="aip-input-right">
+            <button class="aip-cu-toggle" id="aip-clickup-toggle" title="Use ClickUp tasks as context" aria-pressed="false">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              <span>ClickUp</span>
+            </button>
+            <button class="aip-send-btn" id="aip-send">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
         </div>
       </div>
       <div class="aip-quick" id="aip-quick">
@@ -695,6 +701,30 @@ function setupPanelEvents() {
 
   // Send
   shadow.getElementById("aip-send").addEventListener("click", overlaySendMessage);
+
+  // ClickUp context toggle — flips the shared `clickupContextEnabled` setting
+  // that background.js reads on every chat call. No message passing needed.
+  const cuToggle = shadow.getElementById("aip-clickup-toggle");
+  const reflectClickupToggle = (on) => {
+    cuToggle.classList.toggle("active", !!on);
+    cuToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    cuToggle.title = on
+      ? "ClickUp context ON — answers use your tasks. Click to turn off."
+      : "ClickUp context OFF — click to answer using your ClickUp tasks.";
+  };
+  chrome.storage.sync.get(["clickupContextEnabled"], (r) => reflectClickupToggle(r.clickupContextEnabled));
+  cuToggle.addEventListener("click", () => {
+    chrome.storage.sync.get(["clickupContextEnabled"], (r) => {
+      const next = !r.clickupContextEnabled;
+      chrome.storage.sync.set({ clickupContextEnabled: next }, () => reflectClickupToggle(next));
+    });
+  });
+  // Keep the button in sync if the setting is changed elsewhere (popup/other tab).
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && changes.clickupContextEnabled) {
+      reflectClickupToggle(changes.clickupContextEnabled.newValue);
+    }
+  });
 
   // Generate Proposal (n8n)
   shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
@@ -1383,6 +1413,10 @@ function extractProposal(text) {
 }
 
 function renderMD(text) {
+  // Some AI outputs raw <a href="URL">label</a> tags. Convert them to markdown
+  // link syntax BEFORE escaping, otherwise the escaped tag leaks out as visible
+  // text (e.g. '...com/" target="_blank">label').
+  text = text.replace(/<a\b[^>]*\bhref=["']?(https?:\/\/[^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
   let html = escHTML(text);
 
   html = html.replace(/^### (.+)$/gm, '<h4 class="aip-md-h">$1</h4>');
@@ -1396,8 +1430,15 @@ function renderMD(text) {
   html = html.replace(/^- \[ \] (.+)$/gm, '<div class="aip-md-check">$1</div>');
   html = html.replace(/^- (.+)$/gm, '<div class="aip-md-li">$1</div>');
   html = html.replace(/^\d+\.[ ]?(.+)$/gm, '<div class="aip-md-li aip-md-ol">$1</div>');
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a class="aip-md-link" href="$2" target="_blank" rel="noopener">$1</a>');
+  // Render markdown links first and tokenize them, so the bare-URL linkifier
+  // below can't re-match the URL inside the href and double-wrap the anchor.
+  const linkTokens = [];
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
+    linkTokens.push('<a class="aip-md-link" href="' + url + '" target="_blank" rel="noopener">' + label + '</a>');
+    return " L" + (linkTokens.length - 1) + " ";
+  });
   html = html.replace(/(https?:\/\/[^\s<"]+)/g, '<a class="aip-md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/ L(\d+) /g, (m, i) => linkTokens[Number(i)]);
   html = html.replace(/\n/g, '<br>');
 
   return html;
@@ -2284,6 +2325,41 @@ function getOverlayCSS() {
     }
     .aip-send-btn:active { transform: scale(0.92); }
     .aip-send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* Right-side cluster: ClickUp toggle + send */
+    .aip-input-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .aip-cu-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 30px;
+      padding: 0 11px;
+      background: rgba(128, 128, 128, 0.12);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.18s ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .aip-cu-toggle:hover { color: var(--text); border-color: var(--accent); }
+    .aip-cu-toggle:active { transform: scale(0.95); }
+    .aip-cu-toggle.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .aip-cu-toggle svg { flex-shrink: 0; }
 
     /* ---- Quick actions ---- */
     .aip-quick {

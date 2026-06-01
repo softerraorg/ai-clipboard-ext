@@ -238,6 +238,22 @@
     .send-btn:hover { opacity: 0.85; }
     .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    .cu-toggle {
+      display: flex; align-items: center; gap: 5px;
+      height: 40px; padding: 0 12px;
+      align-self: flex-end;
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      color: #888;
+      font-size: 12px; font-weight: 600; font-family: inherit;
+      cursor: pointer; white-space: nowrap; flex-shrink: 0;
+      transition: all 0.18s;
+    }
+    .cu-toggle:hover { border-color: #7c83ff; color: #ccc; }
+    .cu-toggle.active { background: linear-gradient(135deg, #7c83ff, #6a5aff); border-color: transparent; color: #fff; }
+    .cu-toggle svg { flex-shrink: 0; }
+
     .quick-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 
     .quick-btn {
@@ -478,6 +494,10 @@
     <div class="input-area">
       <div class="input-row">
         <textarea class="prompt-input" id="promptInput" rows="3" placeholder="Paste client message here, then hit a button below..."></textarea>
+        <button class="cu-toggle" id="clickupToggle" title="Use ClickUp tasks as context" aria-pressed="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          ClickUp
+        </button>
         <button class="send-btn" id="sendBtn">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>

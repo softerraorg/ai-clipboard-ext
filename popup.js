@@ -16,6 +16,29 @@ document.addEventListener("DOMContentLoaded", () => {
     if (result.n8nWebhookUrl) document.getElementById("n8nWebhookUrl").value = result.n8nWebhookUrl;
   });
 
+  // ClickUp context toggle (inline, next to Send) — flips the shared
+  // `clickupContextEnabled` setting that background.js reads on every chat call.
+  const cuToggle = document.getElementById("clickupToggle");
+  const reflectClickup = (on) => {
+    cuToggle.classList.toggle("active", !!on);
+    cuToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    cuToggle.title = on
+      ? "ClickUp context ON — answers use your tasks. Click to turn off."
+      : "ClickUp context OFF — click to answer using your ClickUp tasks.";
+  };
+  chrome.storage.sync.get(["clickupContextEnabled"], (r) => reflectClickup(r.clickupContextEnabled));
+  cuToggle.addEventListener("click", () => {
+    chrome.storage.sync.get(["clickupContextEnabled"], (r) => {
+      const next = !r.clickupContextEnabled;
+      chrome.storage.sync.set({ clickupContextEnabled: next }, () => reflectClickup(next));
+    });
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "sync" && changes.clickupContextEnabled) {
+      reflectClickup(changes.clickupContextEnabled.newValue);
+    }
+  });
+
   // Tab switching
   document.querySelectorAll(".tab").forEach(tab => {
     tab.addEventListener("click", () => {
@@ -436,6 +459,10 @@ function extractProposalText(text) {
 }
 
 function renderMarkdown(text) {
+  // Convert raw <a href="URL">label</a> tags (which the AI sometimes emits) to
+  // markdown link syntax BEFORE escaping, so they render as real links instead
+  // of leaking the tag as visible text.
+  text = text.replace(/<a\b[^>]*\bhref=["']?(https?:\/\/[^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
   let html = escapeHtml(text);
 
   html = html.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
@@ -449,7 +476,15 @@ function renderMarkdown(text) {
   html = html.replace(/^- \[ \] (.+)$/gm, '<div class="md-check">$1</div>');
   html = html.replace(/^- (.+)$/gm, '<div class="md-li">$1</div>');
   html = html.replace(/^\d+\.[ ]?(.+)$/gm, '<div class="md-li md-ol">$1</div>');
-  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a class="md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  // Render markdown links first and tokenize them, so the bare-URL linkifier
+  // below can't re-match the URL inside the href and double-wrap the anchor.
+  const linkTokens = [];
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
+    linkTokens.push('<a class="md-link" href="' + url + '" target="_blank" rel="noopener">' + label + '</a>');
+    return " L" + (linkTokens.length - 1) + " ";
+  });
+  html = html.replace(/(https?:\/\/[^\s<"]+)/g, '<a class="md-link" href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/ L(\d+) /g, (m, i) => linkTokens[Number(i)]);
   html = html.replace(/\n/g, '<br>');
 
   return html;
