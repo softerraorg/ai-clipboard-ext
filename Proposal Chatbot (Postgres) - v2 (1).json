@@ -1,0 +1,331 @@
+{
+  "name": "Proposal Chatbot (Postgres) - v2",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "mode": "webhook",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        48,
+        208
+      ],
+      "id": "fe4e7d26-d801-4b36-a160-c55be5614443",
+      "name": "When chat message received",
+      "webhookId": "a62a843b-7f47-4b85-8b62-eb5d6d7f6e39"
+    },
+    {
+      "parameters": {
+        "jsCode": "const chatInput = $('When chat message received').first().json.chatInput;\nconst payload = $('When chat message received').first().json;\n\nconst portfolio = $('Read Portfolio').all()\n   .filter(item => item.json.what_we_built && item.json.what_we_built.trim() !== '')\n  .map(item => {\n    const client = item.json.client_name || '';\n    const niche = item.json.niche || '';\n    const url = item.json.url || '';\n    const platform = item.json.platform || '';\n    const theme = item.json.theme || '';\n    const built = item.json.what_we_built || '';\n    const caseStudy = item.json.case_study_url || '';\n\n    let entry = `Client: ${client}\\nPlatform: ${platform}\\nNiche: ${niche}`;\n    if (theme) entry += `\\nTheme: ${theme}`;\n    entry += `\\nWhat We Built: ${built}\\nURL: ${url}`;\n    if (caseStudy) entry += `\\nCase Study: ${caseStudy}`;\n\n    return entry;\n  }).join('\\n\\n---\\n\\n');\n\n\nconst profile = $('Read Profile').all().map(item => {\n  return `${item.json.field}: ${item.json.value}`;\n}).join('\\n');\n\n// Winning proposals come ONLY from the extension app (sent in the webhook payload).\n// The Google Sheet is never used.\nconst extProposals = Array.isArray(payload.winningProposals) ? payload.winningProposals : [];\nconst validProposals = extProposals.filter(p => p && (p.proposal || '').trim() !== '');\n\nlet winningProposals;\nif (validProposals.length > 0) {\n  winningProposals = validProposals\n    .map((p, i) => {\n      const jobType = (p.jobPost || 'General').trim();\n      const proposal = (p.proposal || '').trim();\n      return `Example ${i + 1}\\nJob Type: ${jobType}\\nProposal: ${proposal}`;\n    })\n    .join('\\n\\n---\\n\\n');\n} else {\n  winningProposals = '(No saved example proposals were provided. Write in a natural, casual, first-person style as described in the rules below.)';\n}\n\nconst prompt = `You are Muhammad Hassan, an individual Shopify developer writing an Upwork proposal.\n\nJOB DESCRIPTION:\n${chatInput}\n\nBelow are winning proposal examples. FIRST, silently identify the 1-2 examples whose Job Type is closest to THIS job description, and use ONLY those closest matches as your tone and structure reference. Ignore the examples that are not relevant. Do not mention this selection step in your output.\n---EXAMPLE PROPOSALS---\n${winningProposals}\n---END EXAMPLES---\n\nWRITING RULES (follow exactly):\n1. First person \"I\" always. Never \"we\" or \"our team\"\n2. Give a clear 1-2 sentence approach of how you will fix it\n3. Say you have done this before or worked on similar projects\n\n6. Include 3-4 relevant portfolio links. For each link the description in brackets MUST be copied directly from the \"What We Built\" field of that portfolio entry. Do not invent or rephrase descriptions. Format: URL (exact What We Built text). If a Case Study URL exists add it on the next line as: Case Study: [URL]\n7. Close with one short line offering help\n8. Sign off: Regards, Hassan, Top Rated Freelancer\n9. Keep it under 250 words\n11. No generic filler like \"I'd love to help\" or \"I'm excited about this\"\n15. Sound like a real developer who understands the problem, not a salesperson\n16. Portfolio links must be on separate lines, one link per line, each with description in brackets\n17. Format portfolio links using markdown. Put each link on its own paragraph with a blank line between them\n18. Structure the proposal in separate paragraphs with blank lines between them: paragraph 1 is the problem, paragraph 2 is your experience and approach, paragraph 3 is portfolio links, paragraph 4 is closing line\n19. Before writing the proposal, evaluate if this job is worth bidding on.\n    If ANY of these are true, respond with \"DO NOT BID\" and explain why:\n    - Job requires data entry, bulk product upload, or content writing at scale (100+ products)\n    - Client wants a full store built for under $200\n    - Job is vague with no clear technical scope\n    - Client asks for free work, trials, or spec work upfront\n    If the job is worth bidding on, proceed with writing the proposal as normal.\n21. The examples are only for tone and structure reference, not for content\n22. Every sentence must be specific to THIS job description only\n23. Do not add generic developer insights or filler lines that are not directly about the client's problem\n24. The entire first paragraph must be 1-2 sentences maximum\n26. End the proposal with one open-ended question specific to the client's project, something that shows you've read the job and want to understand their setup better before starting. Keep it natural and conversational, not salesy. And never uses long or short dashes, or extra commas just pure 100% humanized.\n27. Only pick portfolio items where the Platform or Niche genuinely matches the client's job. If the job is Shopify do not include Framer or GoHighLevel links. If no relevant portfolio items exist say \"No directly relevant portfolio links available\" instead of forcing irrelevant ones.\n\nPROFILE:\n${profile}\n\nPORTFOLIO (pick 3-4 that match the job niche and platform): Only add links with max 10 words description of each. Not much long\n${portfolio}\n\n\nALSO PROVIDE AFTER THE PROPOSAL (separate section):\nHook Options:\n\n\nFORMAT YOUR RESPONSE EXACTLY LIKE THIS (use these exact headers):\n\n\n\nPROPOSAL:\n[the proposal text here]\n\nEVALUATION:\n[your evaluation here]  \n\nADDITIONAL NOTES:\n\nRed Flags:\n[red flags here]\nSuggested Price Range:\n[price range here]\n`;\n\nreturn [{ json: { prompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        304
+      ],
+      "id": "b7d48539-051e-444d-a479-841dcc9401bc",
+      "name": "Build Prompt",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1008,
+        304
+      ],
+      "id": "7bea3d93-fbe9-40e8-8220-1199a48189ef",
+      "name": "AI Agent",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-opus-4-8",
+          "mode": "list",
+          "cachedResultName": "Claude Opus 4.8"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1008,
+        512
+      ],
+      "id": "eeb22aa3-73a9-43b2-983e-dc399d7be988",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "ypk9TUUTHuDgygnh",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-clickup-1",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "clickup",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        256,
+        208
+      ],
+      "id": "f3331e21-4f18-40e1-984b-3e06668efcb1",
+      "name": "Route: ClickUp or Proposal"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format ClickUp tasks into a compact text block for the AI system prompt.\nconst tasks = $input.all().map(i => i.json).filter(Boolean);\n\nif (!tasks.length) {\n  return [{ json: { output: \"No open ClickUp tasks found.\", context: \"No open ClickUp tasks found.\" } }];\n}\n\nconst lines = tasks.map(t => {\n  const name = t.name || \"(untitled)\";\n  const status = (t.status && (t.status.status || t.status)) || \"\";\n  const list = (t.list && t.list.name) || \"\";\n  let due = \"\";\n  if (t.due_date) {\n    const d = new Date(Number(t.due_date));\n    if (!isNaN(d.getTime())) due = d.toISOString().slice(0, 10);\n  }\n  const assignees = Array.isArray(t.assignees)\n    ? t.assignees.map(a => a.username || a.email).filter(Boolean).join(\", \")\n    : \"\";\n\n  const meta = [];\n  if (status) meta.push(`status: ${status}`);\n  if (list) meta.push(`list: ${list}`);\n  if (due) meta.push(`due: ${due}`);\n  if (assignees) meta.push(`assignee: ${assignees}`);\n\n  let line = `- ${name}`;\n  if (meta.length) line += ` (${meta.join(\", \")})`;\n  return line;\n});\n\nconst context = `Open tasks (${tasks.length}):\\n` + lines.join(\"\\n\");\nreturn [{ json: { output: context, context } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        96
+      ],
+      "id": "3e808d62-1e49-42f5-a595-b81567383abd",
+      "name": "Format Tasks"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT client_name, niche, url, platform, theme, what_we_built, case_study_url, figma, github, upwork_case_study FROM portfolio;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        464,
+        304
+      ],
+      "id": "7a4e6fd4-e9bb-4d77-833d-47e4ed39cbdd",
+      "name": "Read Portfolio",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "yBOPICYYSvrAyfb4",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT field, value FROM profile;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        624,
+        304
+      ],
+      "id": "8327c507-0d49-4a4b-b74f-77fdbd11da2b",
+      "name": "Read Profile",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "yBOPICYYSvrAyfb4",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT task_id, name, status, assignee, due_date, list_name, space_name\nFROM clickup_tasks\nWHERE status NOT IN ('done', 'closed', 'cancelled')\nORDER BY due_date ASC NULLS LAST;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        464,
+        96
+      ],
+      "id": "e6f99c35-69ab-41f2-bfa1-7dcb8847ef50",
+      "name": "Get ClickUp Tasks",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "yBOPICYYSvrAyfb4",
+          "name": "Postgres account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $json.context || $json.output || 'No tasks found.';\nconst userMessage = $('When chat message received').first().json.chatInput || '';\n\nconst prompt = `You are a helpful assistant managing Hassan's ClickUp tasks.\n\nHere are his current open tasks:\n${context}\n\nUser question: ${userMessage}\n\nAnswer using only the task data above. Be concise. If the user just wants the list show it cleanly grouped by list or due date. If a task has no due date say so. Do not invent tasks or dates that are not in the data.`;\n\nreturn [{ json: { prompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        96
+      ],
+      "id": "fc3b1ba3-4c82-49b2-bf78-70c9bbf2b7ca",
+      "name": "Build ClickUp Prompt."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Route: ClickUp or Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: ClickUp or Proposal": {
+      "main": [
+        [
+          {
+            "node": "Get ClickUp Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read Portfolio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        []
+      ]
+    },
+    "Read Portfolio": {
+      "main": [
+        [
+          {
+            "node": "Read Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Profile": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get ClickUp Tasks": {
+      "main": [
+        [
+          {
+            "node": "Format Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Tasks": {
+      "main": [
+        [
+          {
+            "node": "Build ClickUp Prompt.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build ClickUp Prompt.": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "CtDjk9CoZaKVvzgk",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "2f189c55-e5af-4fd6-9677-78ac240bc86a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "caff22fcafa35063b0838d6d3faa54bf0a5c857ab08ad7b6816e934c7169d14f"
+  },
+  "id": "jYsVTslskGm4hNsF",
+  "tags": []
+}

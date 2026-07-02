@@ -162,23 +162,37 @@ async function getClickUpContext({ forceRefresh = false } = {}) {
     return clickupContextCache.text;
   }
 
-  const response = await fetch(n8nWebhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "sendMessage",
-      mode: "clickup",
-      chatInput: "Return my current ClickUp tasks.",
-      sessionId: "ext-" + now
-    })
-  });
+  // Give up after 15s so a slow/hanging n8n can never freeze the chat.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  let response;
+  try {
+    response = await fetch(n8nWebhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "sendMessage",
+        mode: "clickup",
+        chatInput: "Return my current ClickUp tasks.",
+        sessionId: "ext-" + now
+      }),
+      signal: controller.signal
+    });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      throw new Error("ClickUp webhook timed out after 15s.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`ClickUp webhook error: ${response.status}`);
   }
 
   const data = await response.json().catch(() => ({}));
-  // Accept a few shapes so it's tolerant of how the n8n workflow is wired.
   const text = (data.context || data.output || data.text || "").toString().trim();
   clickupContextCache = { text, fetchedAt: now };
   return text;
@@ -232,8 +246,9 @@ Rules:
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-5",
       max_tokens: 2048,
+      thinking: { type: "disabled" },
       system: systemPrompt,
       messages: messages
     })
@@ -245,7 +260,9 @@ Rules:
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  // Sonnet 5 may prepend a "thinking" block — find the text block, don't assume [0]
+  const textBlock = (data.content || []).find(b => b.type === "text");
+  return textBlock ? textBlock.text : "";
 }
 
 async function callClaudeAPI(text, mode) {
@@ -266,8 +283,9 @@ async function callClaudeAPI(text, mode) {
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-5",
       max_tokens: 2048,
+      thinking: { type: "disabled" },
       system: modeConfig.prompt,
       messages: [{ role: "user", content: text }]
     })
@@ -279,7 +297,9 @@ async function callClaudeAPI(text, mode) {
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  // Sonnet 5 may prepend a "thinking" block — find the text block, don't assume [0]
+  const textBlock = (data.content || []).find(b => b.type === "text");
+  return textBlock ? textBlock.text : "";
 }
 // n8n Proposal Bot API
 async function callN8nProposalBot(jobDescription, winningProposals) {
