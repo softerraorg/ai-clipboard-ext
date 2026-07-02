@@ -556,6 +556,14 @@
         <input type="password" class="setting-input" id="apiKey" placeholder="sk-ant-..." spellcheck="false">
       </div>
       <div class="setting-group">
+        <label>Claude Model (Chat + Polish)</label>
+        <select class="setting-input" id="chatModel">
+          <option value="claude-sonnet-5">Claude Sonnet 5 — balanced (recommended)</option>
+          <option value="claude-opus-4-8">Claude Opus 4.8 — most capable, pricier</option>
+          <option value="claude-haiku-4-5">Claude Haiku 4.5 — fastest &amp; cheapest</option>
+        </select>
+      </div>
+      <div class="setting-group">
         <label>n8n Proposal Bot Webhook URL</label>
         <input type="text" class="setting-input" id="n8nWebhookUrl" placeholder="https://your-n8n.com/webhook/.../chat" spellcheck="false">
       </div>

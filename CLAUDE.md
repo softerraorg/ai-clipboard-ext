@@ -28,7 +28,7 @@ Three execution contexts that communicate only via `chrome.runtime`/`chrome.tabs
 > ⚠️ **Duplicated chat logic.** The popup (`popup.js`) and the overlay (`content.js`) each implement their own copy of: chat send loop, markdown rendering (`renderMarkdown`/`renderMD`), markdown stripping (`stripMarkdownChars`/`stripMD`), proposal extraction (`extractProposalText`/`extractProposal`), and the winning-proposals manager. When changing chat behavior, **update both** or they will drift. They are not shared modules.
 
 ### Data flow for a chat message
-content script / popup builds `messages[]` → `chrome.runtime.sendMessage({action:"chat-api", messages})` → `background.js` `callChatAPI()` reads `apiKey` + `customPrompt` from storage, POSTs to Claude → response text returned via `sendResponse`. The model is **hardcoded** as `claude-sonnet-5` in `background.js` (two call sites: `callChatAPI` and `callClaudeAPI`).
+content script / popup builds `messages[]` → `chrome.runtime.sendMessage({action:"chat-api", messages})` → `background.js` `callChatAPI()` reads `apiKey` + `customPrompt` from storage, POSTs to Claude → response text returned via `sendResponse`. The model is selectable in the popup's Settings tab (`chatModel` in `chrome.storage.sync`, default `claude-sonnet-5`) and read by both call sites in `background.js` (`callChatAPI` and `callClaudeAPI`).
 
 ### Storage model
 - `chrome.storage.sync`: `apiKey`, `customPrompt` (overrides the default chat system prompt), `n8nWebhookUrl`.

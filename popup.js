@@ -10,10 +10,11 @@ const MAX_PROPOSALS = 10;
 // ---- Init ----
 document.addEventListener("DOMContentLoaded", () => {
   // Load saved settings
-  chrome.storage.sync.get(["apiKey", "customPrompt", "n8nWebhookUrl"], (result) => {
+  chrome.storage.sync.get(["apiKey", "customPrompt", "n8nWebhookUrl", "chatModel"], (result) => {
     if (result.apiKey) document.getElementById("apiKey").value = result.apiKey;
     if (result.customPrompt) document.getElementById("customPrompt").value = result.customPrompt;
     if (result.n8nWebhookUrl) document.getElementById("n8nWebhookUrl").value = result.n8nWebhookUrl;
+    if (result.chatModel) document.getElementById("chatModel").value = result.chatModel;
   });
 
   // ClickUp context toggle (inline, next to Send) — flips the shared
@@ -108,8 +109,9 @@ function saveSettings() {
   const apiKey = document.getElementById("apiKey").value.trim();
   const customPrompt = document.getElementById("customPrompt").value.trim();
   const n8nWebhookUrl = document.getElementById("n8nWebhookUrl").value.trim();
+  const chatModel = document.getElementById("chatModel").value;
 
-  chrome.storage.sync.set({ apiKey, customPrompt, n8nWebhookUrl }, () => {
+  chrome.storage.sync.set({ apiKey, customPrompt, n8nWebhookUrl, chatModel }, () => {
     const status = document.getElementById("saveStatus");
     status.style.display = "block";
     setTimeout(() => { status.style.display = "none"; }, 2000);

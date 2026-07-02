@@ -1,0 +1,326 @@
+{
+  "name": "ClickUp → PostgreSQL Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "daysInterval": 2
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        0
+      ],
+      "id": "011374d3-1b89-441b-aeb8-63d6a55a49d4",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://api.clickup.com/api/v2/space/90183782013/folder?archived=false",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "pk_10211882_GIWF86DNKRAH3T5NZJ39DA7DSJOVJ2D9"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        64,
+        0
+      ],
+      "id": "5ace9938-8039-4a11-9ed4-7b864f7ef96c",
+      "name": "Get Folders"
+    },
+    {
+      "parameters": {
+        "url": "https://api.clickup.com/api/v2/team/90181046044/task?space_ids[]=90183782013&include_closed=true&subtasks=true&page=0",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "pk_10211882_GIWF86DNKRAH3T5NZJ39DA7DSJOVJ2D9"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        272,
+        0
+      ],
+      "id": "a5b0eca6-fe2e-41fe-8a6a-15ff4a0aab28",
+      "name": "Get All Tasks"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "tasks",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "2735dff0-0012-49a4-83a0-86d71553afbb",
+      "name": "Split Tasks"
+    },
+    {
+      "parameters": {
+        "jsCode": "const PKT_OFFSET = 5 * 60 * 60 * 1000;\n\nreturn $input.all().map(({ json: t }) => ({\n  json: {\n    task_id:       t.id,\n    name:          t.name,\n    status:        t.status?.status ?? null,\n    assignee:      t.assignees?.[0]?.username ?? null,\n    due_date:      t.due_date\n                     ? new Date(Number(t.due_date) + PKT_OFFSET).toISOString()\n                     : null,\n    list_name:     t.list?.name ?? null,\n    space_name:    t.space?.name ?? null,\n    custom_fields: { fields: t.custom_fields ?? [] },\n    updated_at:    new Date().toISOString()\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        0
+      ],
+      "id": "4663ad8b-811f-41f3-998c-26ca8ecc6fdf",
+      "name": "Map Fields"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "clickup_tasks",
+          "mode": "list",
+          "cachedResultName": "clickup_tasks"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_id": "={{ $json.task_id }}",
+            "name": "={{ $json.name }}",
+            "status": "={{ $json.status }}",
+            "assignee": "={{ $json.assignee }}",
+            "due_date": "={{ $json.due_date }}",
+            "list_name": "={{ $json.list_name }}",
+            "space_name": "={{ $json.space_name }}",
+            "custom_fields": "={{ $json.custom_fields }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [
+            "task_id"
+          ],
+          "schema": [
+            {
+              "id": "task_id",
+              "displayName": "task_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "assignee",
+              "displayName": "assignee",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "list_name",
+              "displayName": "list_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "space_name",
+              "displayName": "space_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "custom_fields",
+              "displayName": "custom_fields",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        0
+      ],
+      "id": "0d1af4be-6135-4a6f-977a-60c03ae01550",
+      "name": "Upsert to Postgres",
+      "credentials": {
+        "postgres": {
+          "id": "yBOPICYYSvrAyfb4",
+          "name": "Postgres account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Schedule Trigger": [
+      {
+        "json": {
+          "timestamp": "2026-07-02T00:00:26.006+05:00",
+          "Readable date": "July 2nd 2026, 12:00:26 am",
+          "Readable time": "12:00:26 am",
+          "Day of week": "Thursday",
+          "Year": "2026",
+          "Month": "July",
+          "Day of month": "02",
+          "Hour": "00",
+          "Minute": "00",
+          "Second": "26",
+          "Timezone": "Asia/Karachi (UTC+05:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Folders": {
+      "main": [
+        [
+          {
+            "node": "Get All Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Tasks": {
+      "main": [
+        [
+          {
+            "node": "Split Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Tasks": {
+      "main": [
+        [
+          {
+            "node": "Map Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Fields": {
+      "main": [
+        [
+          {
+            "node": "Upsert to Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "CtDjk9CoZaKVvzgk",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "ac3805b0-68d2-44eb-af5b-c00093977fd6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "caff22fcafa35063b0838d6d3faa54bf0a5c857ab08ad7b6816e934c7169d14f"
+  },
+  "id": "0iAslhbbWCPivTKy",
+  "tags": []
+}

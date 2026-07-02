@@ -200,8 +200,8 @@ async function getClickUpContext({ forceRefresh = false } = {}) {
 
 // Chat API - multi-turn conversation with custom system prompt
 async function callChatAPI(messages) {
-  const { apiKey, customPrompt, clickupContextEnabled } = await chrome.storage.sync.get([
-    "apiKey", "customPrompt", "clickupContextEnabled"
+  const { apiKey, customPrompt, clickupContextEnabled, chatModel } = await chrome.storage.sync.get([
+    "apiKey", "customPrompt", "clickupContextEnabled", "chatModel"
   ]);
 
   if (!apiKey) {
@@ -246,7 +246,7 @@ Rules:
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
+      model: chatModel || "claude-sonnet-5",
       max_tokens: 2048,
       thinking: { type: "disabled" },
       system: systemPrompt,
@@ -266,7 +266,7 @@ Rules:
 }
 
 async function callClaudeAPI(text, mode) {
-  const { apiKey } = await chrome.storage.sync.get(["apiKey"]);
+  const { apiKey, chatModel } = await chrome.storage.sync.get(["apiKey", "chatModel"]);
 
   if (!apiKey) {
     throw new Error("API key not set. Click the extension icon to set it.");
@@ -283,7 +283,7 @@ async function callClaudeAPI(text, mode) {
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
+      model: chatModel || "claude-sonnet-5",
       max_tokens: 2048,
       thinking: { type: "disabled" },
       system: modeConfig.prompt,
