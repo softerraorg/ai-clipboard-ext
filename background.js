@@ -113,7 +113,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } 
 
   if (message.action === "chat-api") {
-    callChatAPI(message.messages)
+    callChatAPI(message.messages, message.useClickup)
       .then(result => sendResponse({ success: true, text: result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -199,7 +199,7 @@ async function getClickUpContext({ forceRefresh = false } = {}) {
 }
 
 // Chat API - multi-turn conversation with custom system prompt
-async function callChatAPI(messages) {
+async function callChatAPI(messages, useClickup = false) {
   const { apiKey, customPrompt, clickupContextEnabled, chatModel } = await chrome.storage.sync.get([
     "apiKey", "customPrompt", "clickupContextEnabled", "chatModel"
   ]);
@@ -225,7 +225,7 @@ Rules:
 
   // Context mode: when ON, pull the user's ClickUp tasks and append them to the
   // system prompt. When OFF, the only context is the chat messages themselves.
-  if (clickupContextEnabled) {
+  if (useClickup || clickupContextEnabled) {
     try {
       const clickupContext = await getClickUpContext();
       if (clickupContext) {

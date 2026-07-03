@@ -199,7 +199,7 @@ const LEGACY_CHAT_KEY = "aip_chat_history_v1";
 let sessions = [];
 let activeSessionId = null;
 let chatHistory = [];
-let currentTheme = "dark";
+let currentTheme = "light";
 
 function newSessionId() {
   return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -485,15 +485,19 @@ function applyTheme(theme) {
   currentTheme = theme;
   const panel = shadow && shadow.getElementById("aip-panel");
   if (panel) panel.setAttribute("data-theme", theme);
-  try { chrome.storage.local.set({ aip_theme: theme }); } catch(e) {}
+  try { chrome.storage.local.set({ aip_theme_v2: theme }); } catch(e) {}
 }
 
 function loadTheme() {
+  // Apply the saved theme if the user has picked one; otherwise fall back to the
+  // default (currentTheme = "light") so the panel always gets a data-theme set.
   try {
-    chrome.storage.local.get("aip_theme", (r) => {
-      if (r && r.aip_theme) applyTheme(r.aip_theme);
+    chrome.storage.local.get("aip_theme_v2", (r) => {
+      applyTheme(r && r.aip_theme_v2 ? r.aip_theme_v2 : currentTheme);
     });
-  } catch(e) {}
+  } catch(e) {
+    applyTheme(currentTheme);
+  }
 }
 
 async function initFloatingUI() {
@@ -594,6 +598,9 @@ function getPanelHTML() {
         </div>
         <span class="aip-title">Softerra Proposal Bot</span>
       </div>
+      <button class="aip-hdr-btn aip-header-newchat" id="aip-new-chat-top" title="New chat">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
       <div class="aip-header-actions">
         <button class="aip-hdr-btn" id="aip-proposals-btn" title="Manage winning proposals">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
@@ -604,6 +611,9 @@ function getPanelHTML() {
         </button>
         <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear current chat">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+        <button class="aip-hdr-btn" id="aip-maximize" title="Maximize / restore">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2.5"/></svg>
         </button>
         <button class="aip-hdr-btn" id="aip-close" title="Close (Alt+Shift+O)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -631,19 +641,19 @@ function getPanelHTML() {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           </button>
           <div class="aip-input-right">
-            <button class="aip-cu-toggle" id="aip-clickup-toggle" title="Use ClickUp tasks as context" aria-pressed="false">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-              <span>ClickUp</span>
+            <button class="aip-hist-btn" id="aip-gen-history" title="Generate a reply grounded in your ClickUp task history">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2.5"/></svg>
+              <span>Generate from History</span>
             </button>
-            <button class="aip-send-btn" id="aip-send">
+            <button class="aip-gen-btn" id="aip-gen-proposal" title="Generate an Upwork proposal from the job text">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span>Generate Proposal</span>
+            </button>
+            <button class="aip-send-btn" id="aip-send" title="Send">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </div>
         </div>
-      </div>
-      <div class="aip-quick" id="aip-quick">
-        <button class="aip-qbtn aip-n8n-btn" id="aip-gen-proposal">⚡ Generate Proposal</button>
-        <button class="aip-qbtn aip-send-plain-btn" id="aip-send-plain">Send</button>
       </div>
     </div>
 
@@ -712,29 +722,10 @@ function setupPanelEvents() {
   // Send
   shadow.getElementById("aip-send").addEventListener("click", overlaySendMessage);
 
-  // ClickUp context toggle — flips the shared `clickupContextEnabled` setting
-  // that background.js reads on every chat call. No message passing needed.
-  const cuToggle = shadow.getElementById("aip-clickup-toggle");
-  const reflectClickupToggle = (on) => {
-    cuToggle.classList.toggle("active", !!on);
-    cuToggle.setAttribute("aria-pressed", on ? "true" : "false");
-    cuToggle.title = on
-      ? "ClickUp context ON — answers use your tasks. Click to turn off."
-      : "ClickUp context OFF — click to answer using your ClickUp tasks.";
-  };
-  chrome.storage.sync.get(["clickupContextEnabled"], (r) => reflectClickupToggle(r.clickupContextEnabled));
-  cuToggle.addEventListener("click", () => {
-    chrome.storage.sync.get(["clickupContextEnabled"], (r) => {
-      const next = !r.clickupContextEnabled;
-      chrome.storage.sync.set({ clickupContextEnabled: next }, () => reflectClickupToggle(next));
-    });
-  });
-  // Keep the button in sync if the setting is changed elsewhere (popup/other tab).
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.clickupContextEnabled) {
-      reflectClickupToggle(changes.clickupContextEnabled.newValue);
-    }
-  });
+  // "Generate from History" — one-shot send that grounds this single reply in the
+  // user's ClickUp task history (passes useClickup:true for this message only).
+  const histBtn = shadow.getElementById("aip-gen-history");
+  if (histBtn) histBtn.addEventListener("click", () => overlaySendMessage({ useClickup: true }));
 
   // Generate Proposal (n8n)
   shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
@@ -751,8 +742,19 @@ function setupPanelEvents() {
   });
   shadow.getElementById("aip-prop-save").addEventListener("click", saveProposalsFromModal);
 
-  // Send plain — same as arrow send button
-  shadow.getElementById("aip-send-plain").addEventListener("click", overlaySendMessage);
+  // New chat (header centered +) — reuse the sidebar new-chat handler
+  const newChatTop = shadow.getElementById("aip-new-chat-top");
+  if (newChatTop) newChatTop.addEventListener("click", () => {
+    const sidebarNew = shadow.getElementById("aip-new-chat");
+    if (sidebarNew) sidebarNew.click();
+  });
+
+  // Maximize / restore the panel size
+  const maxBtn = shadow.getElementById("aip-maximize");
+  if (maxBtn) maxBtn.addEventListener("click", () => {
+    const p = shadow.getElementById("aip-panel");
+    if (p) p.classList.toggle("maximized");
+  });
 
   // Theme toggle
   shadow.getElementById("aip-theme-toggle").addEventListener("click", () => {
@@ -903,8 +905,10 @@ function renderAttachments() {
   });
 }
 
-async function overlaySendMessage() {
+async function overlaySendMessage(opts = {}) {
   if (overlayProcessing) return;
+  // One-shot ClickUp grounding (from the "Generate from History" button).
+  const useClickup = opts && opts.useClickup === true;
 
   const promptEl = shadow.getElementById("aip-prompt");
   const userMessage = promptEl.value.trim();
@@ -968,7 +972,7 @@ async function overlaySendMessage() {
 
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "chat-api", messages: apiMessages },
+        { action: "chat-api", messages: apiMessages, useClickup },
         (response) => {
           if (chrome.runtime.lastError) {
             chatHistory.pop();
@@ -1512,55 +1516,55 @@ function getOverlayCSS() {
   return `
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* ========== CSS VARIABLES — dark mode (default) ========== */
+    /* ========== CSS VARIABLES — light mode (default) ========== */
     #aip-panel {
-      --bg:          #212121;
-      --bg-raised:   #2f2f2f;
-      --bg-sidebar:  #171717;
-      --bg-header:   #212121;
-      --bg-input:    #2f2f2f;
-      --bg-hover:    #3a3a3a;
-      --bg-user:     #303030;
-      --border:      #3a3a3a;
-      --border-med:  #4a4a4a;
-      --text:        #ececec;
-      --text-dim:    #c4c4c4;
-      --text-muted:  #888;
-      --accent:      #7c83ff;
-      --accent-soft: rgba(124,131,255,0.12);
+      --bg:          #ffffff;
+      --bg-raised:   #f7f7f9;
+      --bg-sidebar:  #fafafa;
+      --bg-header:   #ffffff;
+      --bg-input:    #f7f7f9;
+      --bg-hover:    #f0f0f3;
+      --bg-user:     #eef0fe;
+      --border:      #ececef;
+      --border-med:  #dedee3;
+      --text:        #1c1c22;
+      --text-dim:    #55555f;
+      --text-muted:  #9a9aa5;
+      --accent:      #6366f1;
+      --accent-soft: rgba(99,102,241,0.08);
+      --amber:       #d97706;
+      --amber-soft:  rgba(217,119,6,0.10);
+      --danger:      #ef4444;
+      --success:     #22c55e;
+    }
+
+    /* ========== CSS VARIABLES — dark mode (opt-in via toggle) ========== */
+    #aip-panel[data-theme="dark"] {
+      --bg:          #1c1c1f;
+      --bg-raised:   #26262b;
+      --bg-sidebar:  #161618;
+      --bg-header:   #1c1c1f;
+      --bg-input:    #26262b;
+      --bg-hover:    #2e2e34;
+      --bg-user:     #2a2a30;
+      --border:      #2b2b31;
+      --border-med:  #3a3a42;
+      --text:        #ececed;
+      --text-dim:    #b8b8c0;
+      --text-muted:  #7d7d87;
+      --accent:      #818cf8;
+      --accent-soft: rgba(129,140,248,0.14);
       --amber:       #f59e0b;
       --amber-soft:  rgba(245,158,11,0.12);
       --danger:      #fb7185;
       --success:     #4ade80;
     }
 
-    /* ========== CSS VARIABLES — light mode ========== */
-    #aip-panel[data-theme="light"] {
-      --bg:          #ffffff;
-      --bg-raised:   #f5f5f5;
-      --bg-sidebar:  #efefef;
-      --bg-header:   #ffffff;
-      --bg-input:    #f0f0f0;
-      --bg-hover:    #e4e4e4;
-      --bg-user:     #e8e8fc;
-      --border:      #e0e0e0;
-      --border-med:  #cccccc;
-      --text:        #1a1a1a;
-      --text-dim:    #444444;
-      --text-muted:  #888888;
-      --accent:      #5a5fcf;
-      --accent-soft: rgba(90,95,207,0.1);
-      --amber:       #b45309;
-      --amber-soft:  rgba(180,83,9,0.1);
-      --danger:      #dc2626;
-      --success:     #16a34a;
-    }
-
     /* ---- Theme toggle icons ---- */
-    #aip-panel .aip-icon-sun  { display: block; }
-    #aip-panel .aip-icon-moon { display: none; }
-    #aip-panel[data-theme="light"] .aip-icon-sun  { display: none; }
-    #aip-panel[data-theme="light"] .aip-icon-moon { display: block; }
+    #aip-panel .aip-icon-sun  { display: none; }
+    #aip-panel .aip-icon-moon { display: block; }
+    #aip-panel[data-theme="dark"] .aip-icon-sun  { display: block; }
+    #aip-panel[data-theme="dark"] .aip-icon-moon { display: none; }
 
     /* ---- FAB ---- */
     #aip-fab {
@@ -1603,11 +1607,11 @@ function getOverlayCSS() {
       max-height: 700px;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 16px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      box-shadow: 0 16px 56px rgba(0,0,0,0.45), 0 4px 16px rgba(0,0,0,0.25);
+      box-shadow: 0 10px 40px rgba(20,20,40,0.14), 0 2px 8px rgba(20,20,40,0.06);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       color: var(--text);
       transform: scale(0.85) translateY(16px);
@@ -1738,6 +1742,7 @@ function getOverlayCSS() {
 
     /* ---- Header ---- */
     .aip-header {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -1747,6 +1752,20 @@ function getOverlayCSS() {
       background: var(--bg-header);
     }
     .aip-header-left { display: flex; align-items: center; gap: 8px; }
+    /* Centered new-chat "+" */
+    .aip-header-newchat {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+    /* Maximize / restore */
+    #aip-panel.maximized {
+      width: calc(100vw - 40px);
+      max-width: none;
+      height: calc(100vh - 40px);
+      max-height: none;
+    }
     .aip-logo {
       width: 26px; height: 26px;
       background: var(--accent);
@@ -1964,7 +1983,6 @@ function getOverlayCSS() {
       border-radius: 18px;
       border-bottom-right-radius: 4px;
       background: var(--bg-user);
-      border: 1px solid var(--border);
       align-self: flex-end;
       color: var(--text);
     }
@@ -2098,9 +2116,8 @@ function getOverlayCSS() {
     .aip-msg-actions {
       display: flex;
       gap: 6px;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
+      margin-top: 12px;
+      padding-top: 2px;
     }
     .aip-action-btn {
       background: var(--bg-raised);
@@ -2363,6 +2380,54 @@ function getOverlayCSS() {
       color: #fff;
     }
     .aip-cu-toggle svg { flex-shrink: 0; }
+
+    /* Generate Proposal pill (lives in the input's bottom-right) */
+    .aip-gen-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 13px;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent);
+      border-radius: 16px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.18s ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .aip-gen-btn:hover { background: var(--accent); color: #fff; }
+    .aip-gen-btn:active { transform: scale(0.97); }
+    .aip-gen-btn svg { flex-shrink: 0; }
+
+    /* "Generate from History" pill (was the ClickUp toggle) */
+    .aip-hist-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 30px;
+      padding: 0 11px;
+      background: rgba(128, 128, 128, 0.10);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.18s ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .aip-hist-btn:hover { color: var(--text); border-color: var(--accent); }
+    .aip-hist-btn:active { transform: scale(0.97); }
+    .aip-hist-btn svg { flex-shrink: 0; }
 
     /* ---- Quick actions ---- */
     .aip-quick {
