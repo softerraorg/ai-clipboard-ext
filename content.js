@@ -702,9 +702,15 @@ function getPanelHTML() {
         <input type="file" id="aip-file-input" accept="image/*,.pdf,.txt,.md,.json,.csv,.log" multiple style="display:none">
         <textarea class="aip-prompt" id="aip-prompt" rows="3" placeholder="Paste client message here, then hit a button below..."></textarea>
         <div class="aip-input-controls">
-          <button class="aip-attach-btn" id="aip-attach" title="Attach file">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
+          <div class="aip-input-left">
+            <button class="aip-attach-btn" id="aip-attach" title="Attach file">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <select class="aip-model-select" id="aip-model-select" title="Model used for Generate Proposal" aria-label="Proposal model">
+              <option value="claude">Claude</option>
+              <option value="chatgpt">ChatGPT</option>
+            </select>
+          </div>
           <div class="aip-input-right">
             <button class="aip-hist-btn" id="aip-gen-history" title="Generate a reply grounded in your ClickUp task history">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2.5"/></svg>
@@ -791,6 +797,17 @@ function setupPanelEvents() {
   // user's ClickUp task history (passes useClickup:true for this message only).
   const histBtn = shadow.getElementById("aip-gen-history");
   if (histBtn) histBtn.addEventListener("click", () => overlaySendMessage({ useClickup: true }));
+
+  // Proposal model picker (Claude / ChatGPT) — remembers the choice, sent to n8n on Generate Proposal
+  const modelSelect = shadow.getElementById("aip-model-select");
+  if (modelSelect) {
+    chrome.storage.sync.get(["proposalModel"], (r) => {
+      if (r && r.proposalModel) modelSelect.value = r.proposalModel;
+    });
+    modelSelect.addEventListener("change", () => {
+      chrome.storage.sync.set({ proposalModel: modelSelect.value });
+    });
+  }
 
   // Generate Proposal (n8n)
   shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
@@ -1406,10 +1423,14 @@ async function overlayN8nProposal() {
   const { winningProposals } = await chrome.storage.local.get(["winningProposals"]);
   const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
 
+  // Which model n8n should use for this proposal (from the composer dropdown)
+  const modelSelect = shadow.getElementById("aip-model-select");
+  const model = modelSelect ? modelSelect.value : "claude";
+
   try {
     const result = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { action: "n8n-proposal", text: jobDescription, winningProposals: savedProposals },
+        { action: "n8n-proposal", text: jobDescription, winningProposals: savedProposals, model },
         (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -2380,6 +2401,25 @@ function getOverlayCSS() {
       transform: scale(1.08);
     }
     .aip-attach-btn:active { transform: scale(0.92); }
+
+    /* Attach + model-picker group (bottom-left of the input) */
+    .aip-input-left { display: flex; align-items: center; gap: 6px; }
+    .aip-model-select {
+      height: 30px;
+      padding: 0 6px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .aip-model-select:hover { border-color: var(--accent); color: var(--text); }
+    .aip-model-select:focus { border-color: var(--accent); }
 
     .aip-prompt {
       flex: 1;

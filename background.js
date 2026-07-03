@@ -120,7 +120,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "n8n-proposal") {
-    callN8nProposalBot(message.text, message.winningProposals)
+    callN8nProposalBot(message.text, message.winningProposals, message.model)
       .then(result => sendResponse({ success: true, text: result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -302,7 +302,7 @@ async function callClaudeAPI(text, mode) {
   return textBlock ? textBlock.text : "";
 }
 // n8n Proposal Bot API
-async function callN8nProposalBot(jobDescription, winningProposals) {
+async function callN8nProposalBot(jobDescription, winningProposals, model = "claude") {
   const { n8nWebhookUrl } = await chrome.storage.sync.get(["n8nWebhookUrl"]);
 
   if (!n8nWebhookUrl) {
@@ -316,6 +316,7 @@ async function callN8nProposalBot(jobDescription, winningProposals) {
       action: "sendMessage",
       chatInput: jobDescription,
       winningProposals: Array.isArray(winningProposals) ? winningProposals : [],
+      model: model || "claude",
       sessionId: "ext-" + Date.now()
     })
   });
