@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const PKT_OFFSET = 5 * 60 * 60 * 1000;\n\nreturn $input.all().map(({ json: t }) => ({\n  json: {\n    task_id:       t.id,\n    name:          t.name,\n    status:        t.status?.status ?? null,\n    assignee:      t.assignees?.[0]?.username ?? null,\n    due_date:      t.due_date\n                     ? new Date(Number(t.due_date) + PKT_OFFSET).toISOString()\n                     : null,\n    list_name:     t.list?.name ?? null,\n    space_name:    t.space?.name ?? null,\n    custom_fields: { fields: t.custom_fields ?? [] },\n    updated_at:    new Date().toISOString()\n  }\n}));\n"
+        "jsCode": "const PKT_OFFSET = 5 * 60 * 60 * 1000;\n\n// Pull the Shopify admin URL out of the ClickUp custom fields\nfunction getStoreAdminUrl(fields) {\n  const named = fields.find(f => f.name === 'Store Admin' && f.value);\n  if (named) return named.value;\n  const anyAdmin = fields.find(f => typeof f.value === 'string' && f.value.includes('admin.shopify.com/store/'));\n  return anyAdmin?.value ?? null;\n}\n\n// Turn a Store Admin URL into the store's <handle>.myshopify.com domain.\n// Handles both Shopify admin URL styles. Returns null for custom-domain\n// admins (e.g. texasgifts.com/admin) because the myshopify handle isn't in the URL.\nfunction toMyshopifyUrl(adminUrl) {\n  if (!adminUrl) return null;\n  const s = String(adminUrl).trim();\n\n  // Style 1: https://admin.shopify.com/store/<handle>\n  const marker = 'admin.shopify.com/store/';\n  const i = s.indexOf(marker);\n  if (i !== -1) {\n    const handle = s.slice(i + marker.length).split('/')[0].split('?')[0].split('#')[0];\n    if (handle) return `${handle}.myshopify.com`;\n  }\n\n  // Style 2: https://<handle>.myshopify.com/admin\n  const suffix = '.myshopify.com';\n  const j = s.indexOf(suffix);\n  if (j !== -1) {\n    const handle = s.slice(0, j).split('/').pop();\n    if (handle) return `${handle}.myshopify.com`;\n  }\n\n  // Custom domain (texasgifts.com/admin, kumorico.com/admin): can't derive myshopify handle\n  return null;\n}\n\nreturn $input.all().map(({ json: t }) => {\n  const fields = t.custom_fields ?? [];\n  const storeAdminUrl = getStoreAdminUrl(fields);\n\n  return {\n    json: {\n      task_id:         t.id,\n      name:            t.name,\n      status:          t.status?.status ?? null,\n      assignee:        t.assignees?.[0]?.username ?? null,\n      due_date:        t.due_date\n                         ? new Date(Number(t.due_date) + PKT_OFFSET).toISOString()\n                         : null,\n      list_name:       t.list?.name ?? null,\n      space_name:      t.space?.name ?? null,\n      store_admin_url: storeAdminUrl,\n      store_url:       toMyshopifyUrl(storeAdminUrl),\n      custom_fields:   { fields },\n      updated_at:      new Date().toISOString()\n    }\n  };\n});\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -117,6 +117,8 @@
             "due_date": "={{ $json.due_date }}",
             "list_name": "={{ $json.list_name }}",
             "space_name": "={{ $json.space_name }}",
+            "store_admin_url": "={{ $json.store_admin_url }}",
+            "store_url": "={{ $json.store_url }}",
             "custom_fields": "={{ $json.custom_fields }}",
             "updated_at": "={{ $json.updated_at }}"
           },
@@ -182,6 +184,24 @@
             {
               "id": "space_name",
               "displayName": "space_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "store_admin_url",
+              "displayName": "store_admin_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "store_url",
+              "displayName": "store_url",
               "required": false,
               "defaultMatch": false,
               "display": true,

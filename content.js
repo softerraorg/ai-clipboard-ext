@@ -511,8 +511,18 @@ async function initFloatingUI() {
   const fab = document.createElement("button");
   fab.id = "aip-fab";
   fab.innerHTML = `
-    <span class="aip-fab-dot"></span>
-    <svg class="aip-fab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+    <svg class="aip-fab-icon" width="34" height="16" viewBox="0 0 42 20" fill="none" aria-hidden="true">
+      <defs>
+        <filter id="aipDotGlow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="1.6"/>
+        </filter>
+      </defs>
+      <circle cx="6" cy="10" r="4.4" fill="#7c83ff" opacity="0.5" filter="url(#aipDotGlow)"/>
+      <circle cx="6" cy="10" r="3.4" fill="#9fb0ff"/>
+      <path d="M23 3 Q23 10 30 10 Q23 10 23 17 Q23 10 16 10 Q23 10 23 3 Z" fill="#dfe3f5"/>
+      <path d="M33 4 Q33 8.5 37 8.5 Q33 8.5 33 13 Q33 8.5 29 8.5 Q33 8.5 33 4 Z" fill="#cbd1ea"/>
+      <circle cx="36.5" cy="14.5" r="1.6" fill="#b4bcdd"/>
+    </svg>
   `;
   fab.title = "AI Chat (Alt+Shift+O)";
   fab.addEventListener("click", () => togglePanel());
@@ -1576,14 +1586,7 @@ function getOverlayCSS() {
       transition: background 0.18s, border-color 0.18s, transform 0.18s, opacity 0.18s;
       user-select: none;
     }
-    #aip-fab .aip-fab-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
-      background: #7c83ff;
-      box-shadow: 0 0 8px rgba(124,131,255,0.7);
-      flex-shrink: 0;
-    }
-    #aip-fab .aip-fab-icon { opacity: 0.85; flex-shrink: 0; }
+    #aip-fab .aip-fab-icon { opacity: 0.9; flex-shrink: 0; }
     #aip-fab:hover { background: rgba(28,28,40,0.75); border-color: rgba(255,255,255,0.22); transform: translateY(-1px); }
     #aip-fab:active { transform: translateY(0); }
     #aip-fab.hidden { opacity: 0; pointer-events: none; transform: scale(0.85); }

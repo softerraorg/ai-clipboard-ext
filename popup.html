@@ -28,13 +28,19 @@
     .header-icon {
       width: 32px;
       height: 32px;
-      background: linear-gradient(135deg, #7c83ff, #b44aff);
       border-radius: 9px;
+      margin-right: 10px;
+      overflow: hidden;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
-      margin-right: 10px;
+    }
+
+    .header-icon img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
     }
 
     .header h1 { font-size: 15px; font-weight: 700; color: #fff; }
@@ -470,7 +476,7 @@
 </head>
 <body>
   <div class="header">
-    <div class="header-icon">✨</div>
+    <div class="header-icon"><img src="icons/icon128.png" alt="AI Text Polisher"></div>
     <h1>AI Text Polisher</h1>
   </div>
 
