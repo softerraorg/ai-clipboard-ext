@@ -200,6 +200,7 @@ let sessions = [];
 let activeSessionId = null;
 let chatHistory = [];
 let currentTheme = "light";
+let launcherHidden = false; // when true, show the tiny micro edge-tab instead of the full launcher
 
 function newSessionId() {
   return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -521,8 +522,8 @@ async function initFloatingUI() {
           <feGaussianBlur stdDeviation="1.6"/>
         </filter>
       </defs>
-      <circle cx="6" cy="10" r="4.4" fill="#7c83ff" opacity="0.5" filter="url(#aipDotGlow)"/>
-      <circle cx="6" cy="10" r="3.4" fill="#9fb0ff"/>
+      <circle cx="6" cy="10" r="4.4" fill="#3b82f6" opacity="0.5" filter="url(#aipDotGlow)"/>
+      <circle cx="6" cy="10" r="3.4" fill="#93bbfc"/>
       <path d="M23 3 Q23 10 30 10 Q23 10 23 17 Q23 10 16 10 Q23 10 23 3 Z" fill="#dfe3f5"/>
       <path d="M33 4 Q33 8.5 37 8.5 Q33 8.5 33 13 Q33 8.5 29 8.5 Q33 8.5 33 4 Z" fill="#cbd1ea"/>
       <circle cx="36.5" cy="14.5" r="1.6" fill="#b4bcdd"/>
@@ -531,6 +532,19 @@ async function initFloatingUI() {
   fab.title = "AI Chat (Alt+Shift+O)";
   fab.addEventListener("click", () => togglePanel());
   shadow.appendChild(fab);
+
+  // Micro launcher — tiny, subtle edge-tab shown only when the full launcher is hidden
+  const micro = document.createElement("button");
+  micro.id = "aip-micro";
+  micro.className = "hidden";
+  micro.title = "Open Proposal Bot";
+  micro.setAttribute("aria-label", "Open Proposal Bot");
+  micro.innerHTML = `
+    <span class="aip-micro-glyph"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 Q12 12 22 12 Q12 12 12 22 Q12 12 2 12 Q12 12 12 2 Z"/></svg></span>
+    <span class="aip-micro-label">✦ Proposal Bot</span>
+  `;
+  micro.addEventListener("click", restoreLauncher);
+  shadow.appendChild(micro);
 
   // Chat panel
   const panel = document.createElement("div");
@@ -541,7 +555,7 @@ async function initFloatingUI() {
   document.body.appendChild(overlayHost);
 
   setupPanelEvents();
-  makeFabDraggable(fab);
+  loadLauncherHidden();
 
   await loadSessionsFromStorage();
   rerenderActiveChat();
@@ -550,20 +564,71 @@ async function initFloatingUI() {
   loadTheme();
 }
 
-function togglePanel() {
+// Show the correct launcher for the current state: the full FAB when visible,
+// the tiny micro edge-tab when hidden, and neither while the chat panel is open.
+function updateLauncherVisibility() {
   const panel = shadow.getElementById("aip-panel");
   const fab = shadow.getElementById("aip-fab");
-  const isOpen = panel.classList.contains("open");
+  const micro = shadow.getElementById("aip-micro");
+  if (!panel || !fab || !micro) return;
+  const panelOpen = panel.classList.contains("open");
+  if (panelOpen) {
+    fab.classList.add("hidden");
+    micro.classList.add("hidden");
+  } else if (launcherHidden) {
+    fab.classList.add("hidden");
+    micro.classList.remove("hidden");
+  } else {
+    fab.classList.remove("hidden");
+    micro.classList.add("hidden");
+  }
+}
 
+function togglePanel() {
+  const panel = shadow.getElementById("aip-panel");
+  const isOpen = panel.classList.contains("open");
   if (isOpen) {
     panel.classList.remove("open");
-    fab.classList.remove("hidden");
   } else {
     panel.classList.add("open");
-    fab.classList.add("hidden");
     const input = shadow.getElementById("aip-prompt");
     setTimeout(() => input && input.focus(), 200);
   }
+  updateLauncherVisibility();
+}
+
+// Close (×) → collapse the full launcher down to the tiny micro edge-tab, and persist it.
+function closeToMicro() {
+  const panel = shadow.getElementById("aip-panel");
+  if (panel) panel.classList.remove("open");
+  launcherHidden = true;
+  saveLauncherHidden();
+  updateLauncherVisibility();
+}
+
+// Micro click → restore the full launcher and open the chat.
+function restoreLauncher() {
+  launcherHidden = false;
+  saveLauncherHidden();
+  const panel = shadow.getElementById("aip-panel");
+  if (panel && !panel.classList.contains("open")) {
+    panel.classList.add("open");
+    const input = shadow.getElementById("aip-prompt");
+    setTimeout(() => input && input.focus(), 200);
+  }
+  updateLauncherVisibility();
+}
+
+function saveLauncherHidden() {
+  try { chrome.storage.local.set({ aip_launcher_hidden: launcherHidden }); } catch (e) {}
+}
+function loadLauncherHidden() {
+  try {
+    chrome.storage.local.get("aip_launcher_hidden", (r) => {
+      launcherHidden = !!(r && r.aip_launcher_hidden);
+      updateLauncherVisibility();
+    });
+  } catch (e) {}
 }
 
 function toggleOverlay() {
@@ -681,7 +746,7 @@ function getPanelHTML() {
 }
 
 function setupPanelEvents() {
-  shadow.getElementById("aip-close").addEventListener("click", togglePanel);
+  shadow.getElementById("aip-close").addEventListener("click", closeToMicro);
 
   // Clear current chat = empty active session's messages, keep session in list
   shadow.getElementById("aip-clear-chat").addEventListener("click", () => {
@@ -1459,54 +1524,8 @@ function renderMD(text) {
 }
 
 // ============================================================
-// 4. Draggable FAB
+// 4. FAB is fixed bottom-right (drag removed — see CSS #aip-fab position:fixed)
 // ============================================================
-
-function makeFabDraggable(fab) {
-  let isDragging = false;
-  let wasDragged = false;
-  let startX, startY, startLeft, startTop;
-
-  fab.addEventListener("mousedown", (e) => {
-    isDragging = true;
-    wasDragged = false;
-    startX = e.clientX;
-    startY = e.clientY;
-    const rect = fab.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
-    fab.style.transition = "none";
-    e.preventDefault();
-  });
-
-  document.addEventListener("mousemove", (e) => {
-    if (!isDragging) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) wasDragged = true;
-    const rect = fab.getBoundingClientRect();
-    const newLeft = Math.max(0, Math.min(window.innerWidth - rect.width, startLeft + dx));
-    const newTop = Math.max(0, Math.min(window.innerHeight - rect.height, startTop + dy));
-    fab.style.right = "auto";
-    fab.style.bottom = "auto";
-    fab.style.left = newLeft + "px";
-    fab.style.top = newTop + "px";
-  });
-
-  document.addEventListener("mouseup", () => {
-    if (!isDragging) return;
-    isDragging = false;
-    fab.style.transition = "";
-    if (wasDragged) {
-      fab.addEventListener("click", preventClick, { once: true, capture: true });
-    }
-  });
-
-  function preventClick(e) {
-    e.stopImmediatePropagation();
-    e.preventDefault();
-  }
-}
 
 // ============================================================
 // 5. CSS for overlay (injected into Shadow DOM)
@@ -1530,8 +1549,8 @@ function getOverlayCSS() {
       --text:        #1c1c22;
       --text-dim:    #55555f;
       --text-muted:  #9a9aa5;
-      --accent:      #6366f1;
-      --accent-soft: rgba(99,102,241,0.08);
+      --accent:      #3b82f6;
+      --accent-soft: rgba(59,130,246,0.08);
       --amber:       #d97706;
       --amber-soft:  rgba(217,119,6,0.10);
       --danger:      #ef4444;
@@ -1552,8 +1571,8 @@ function getOverlayCSS() {
       --text:        #ececed;
       --text-dim:    #b8b8c0;
       --text-muted:  #7d7d87;
-      --accent:      #818cf8;
-      --accent-soft: rgba(129,140,248,0.14);
+      --accent:      #3b82f6;
+      --accent-soft: rgba(59,130,246,0.14);
       --amber:       #f59e0b;
       --amber-soft:  rgba(245,158,11,0.12);
       --danger:      #fb7185;
@@ -1594,6 +1613,62 @@ function getOverlayCSS() {
     #aip-fab:hover { background: rgba(28,28,40,0.75); border-color: rgba(255,255,255,0.22); transform: translateY(-1px); }
     #aip-fab:active { transform: translateY(0); }
     #aip-fab.hidden { opacity: 0; pointer-events: none; transform: scale(0.85); }
+
+    /* ---- Micro launcher (tiny edge-tab shown when the full launcher is hidden) ---- */
+    #aip-micro {
+      position: fixed;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 2147483646;
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: #3b82f6;
+      color: #fff;
+      opacity: 0.35;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: none;
+      transition: opacity 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    #aip-micro.hidden { opacity: 0; pointer-events: none; transform: translateY(-50%) scale(0.6); }
+    #aip-micro:hover, #aip-micro:focus-visible {
+      opacity: 1;
+      outline: none;
+      transform: translateY(-50%) scale(1.12);
+      box-shadow: 0 0 14px rgba(59, 130, 246, 0.6);
+    }
+    #aip-micro .aip-micro-glyph { display: flex; }
+    /* Optional pill that slides out on hover/focus */
+    #aip-micro .aip-micro-label {
+      position: absolute;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%) translateX(6px);
+      background: #3b82f6;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 11px;
+      border-radius: 9px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 2px 12px rgba(59, 130, 246, 0.4);
+      transition: opacity 0.18s ease, transform 0.2s ease;
+    }
+    #aip-micro:hover .aip-micro-label, #aip-micro:focus-visible .aip-micro-label {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
 
     /* ---- Panel shell ---- */
     #aip-panel {
@@ -2469,10 +2544,10 @@ function getOverlayCSS() {
       font-weight: 600;
     }
     .aip-send-plain-btn:hover {
-      background: rgba(124,131,255,0.2);
+      background: rgba(59,130,246,0.2);
       border-color: var(--accent);
       color: var(--accent);
-      box-shadow: 0 2px 10px rgba(124,131,255,0.15);
+      box-shadow: 0 2px 10px rgba(59,130,246,0.15);
     }
 
     /* ---- Markdown ---- */
