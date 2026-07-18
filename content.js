@@ -2,187 +2,25 @@
 // AI Text Polisher - Content Script (v3 with Floating Chat)
 // ============================================================
 
-let isProcessing = false;
-
 // ============================================================
-// 1. Text Polishing (existing shortcut functionality)
+// 1. Message router — chat overlay toggle (keyboard command Alt+Shift+O)
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "toggle-chat-overlay") {
     toggleOverlay();
   }
-
-  if (message.action === "polish-selected") {
-    const selectedText = window.getSelection().toString().trim();
-    if (selectedText) {
-      polishText(selectedText, message.mode);
-    } else {
-      const active = document.activeElement;
-      if (active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable)) {
-        const text = getTextFromElement(active);
-        if (text) {
-          polishText(text, message.mode);
-        } else {
-          showNotification("Select some text first", "warning");
-        }
-      } else {
-        showNotification("Select some text first", "warning");
-      }
-    }
-  }
-
-  if (message.action === "polish") {
-    polishText(message.text, message.mode);
-  }
 });
 
-function getTextFromElement(el) {
-  if (el.isContentEditable) {
-    const selection = window.getSelection();
-    if (selection.toString().trim()) return selection.toString().trim();
-    return el.innerText.trim();
-  }
-  if (el.selectionStart !== el.selectionEnd) {
-    return el.value.substring(el.selectionStart, el.selectionEnd);
-  }
-  return el.value.trim();
-}
-
-async function polishText(text, mode) {
-  if (isProcessing) return;
-  if (!text || text.length < 2) {
-    showNotification("Select some text first", "warning");
-    return;
-  }
-
-  isProcessing = true;
-  showNotification("Polishing...", "loading");
-
-  try {
-    const response = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(
-        { action: "call-api", text, mode },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else if (response.success) {
-            resolve(response.text);
-          } else {
-            reject(new Error(response.error));
-          }
-        }
-      );
-    });
-
-    const replaced = tryReplaceText(response);
-
-    try {
-      await navigator.clipboard.writeText(response);
-    } catch (clipErr) {
-      // Clipboard access blocked by browser — not critical
-    }
-
-    if (replaced) {
-      showNotification("Text replaced!", "success");
-    } else {
-      showNotification("Copied! Press Ctrl+V to paste", "success");
-    }
-  } catch (error) {
-    console.error("AI Polisher error:", error);
-    const errMsg = error?.message || String(error);
-    if (errMsg.includes("API key")) {
-      showNotification("Set your API key — click extension icon", "error");
-    } else {
-      showNotification("Error: " + errMsg.substring(0, 50), "error");
-    }
-  } finally {
-    isProcessing = false;
-  }
-}
-
-function tryReplaceText(newText) {
-  const active = document.activeElement;
-  if (!active) return false;
-
-  if (active.isContentEditable || active.closest('[contenteditable="true"]')) {
-    const editableEl = active.isContentEditable ? active : active.closest('[contenteditable="true"]');
-    const selection = window.getSelection();
-
-    if (selection.rangeCount > 0 && selection.toString().trim()) {
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(newText));
-      selection.collapseToEnd();
-      editableEl.dispatchEvent(new Event("input", { bubbles: true }));
-      return true;
-    }
-    return false;
-  }
-
-  if (active.tagName === "TEXTAREA" || active.tagName === "INPUT") {
-    const start = active.selectionStart;
-    const end = active.selectionEnd;
-
-    if (start !== end) {
-      active.value = active.value.substring(0, start) + newText + active.value.substring(end);
-      active.selectionStart = start;
-      active.selectionEnd = start + newText.length;
-    } else {
-      active.value = newText;
-    }
-
-    active.dispatchEvent(new Event("input", { bubbles: true }));
-    active.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  }
-
-  return false;
-}
-
 // ============================================================
-// 2. Notification Toast
-// ============================================================
-
-function showNotification(message, type = "info") {
-  const existing = document.getElementById("ai-polisher-toast");
-  if (existing) existing.remove();
-
-  const toast = document.createElement("div");
-  toast.id = "ai-polisher-toast";
-  toast.className = `ai-polisher-toast ai-polisher-${type}`;
-
-  const icons = {
-    loading: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>`,
-    success: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>`,
-    error: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>`,
-    warning: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01"/></svg>`
-  };
-
-  toast.innerHTML = `
-    <span class="ai-polisher-icon${type === 'loading' ? ' ai-polisher-spin' : ''}">${icons[type] || ''}</span>
-    <span class="ai-polisher-message">${message}</span>
-  `;
-
-  document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add("ai-polisher-visible"));
-
-  if (type !== "loading") {
-    setTimeout(() => {
-      toast.classList.remove("ai-polisher-visible");
-      setTimeout(() => toast.remove(), 300);
-    }, 3000);
-  }
-}
-
-// ============================================================
-// 3. Floating Action Button + Chat Overlay
+// 2. Floating Action Button + Chat Overlay
 // ============================================================
 
 let overlayHost = null;
 let shadow = null;
 let overlayProcessing = false;
 let overlayProposals = []; // [{ jobPost, proposal }] — shared with popup via chrome.storage.local
+let overlayPropActive = -1; // index of the proposal shown in the editor pane (-1 = none)
 const OVERLAY_MAX_PROPOSALS = 10;
 let pendingAttachments = []; // {name, mediaType, data (base64), kind: 'image'|'document'|'text', textContent?}
 
@@ -359,12 +197,8 @@ function renderSessionList() {
         <div class="aip-session-title">${escHTML(s.title || "New chat")}</div>
         <div class="aip-session-time">${formatRelativeTime(s.updatedAt)}</div>
       </div>
-      <button class="aip-session-del" title="Delete chat">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-      </button>
     `;
     item.addEventListener("click", (e) => {
-      if (e.target.closest(".aip-session-del")) return;
       if (s.id === activeSessionId) {
         closeSidebar();
         return;
@@ -374,13 +208,6 @@ function renderSessionList() {
       rerenderActiveChat();
       renderSessionList();
       closeSidebar();
-    });
-    item.querySelector(".aip-session-del").addEventListener("click", (e) => {
-      e.stopPropagation();
-      deleteSession(s.id);
-      saveSessions();
-      rerenderActiveChat();
-      renderSessionList();
     });
     list.appendChild(item);
   }
@@ -658,14 +485,7 @@ function getPanelHTML() {
         <button class="aip-hdr-btn" id="aip-history" title="Chat history">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
         </button>
-        <div class="aip-logo">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-        </div>
-        <span class="aip-title">Softerra Proposal Bot</span>
       </div>
-      <button class="aip-hdr-btn aip-header-newchat" id="aip-new-chat-top" title="New chat">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
       <div class="aip-header-actions">
         <button class="aip-hdr-btn" id="aip-proposals-btn" title="Manage winning proposals">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
@@ -674,8 +494,8 @@ function getPanelHTML() {
           <svg class="aip-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="aip-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
-        <button class="aip-hdr-btn" id="aip-clear-chat" title="Clear current chat">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        <button class="aip-hdr-btn" id="aip-new-chat-top" title="New chat">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <button class="aip-hdr-btn" id="aip-maximize" title="Maximize / restore">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2.5"/></svg>
@@ -706,7 +526,7 @@ function getPanelHTML() {
             <button class="aip-attach-btn" id="aip-attach" title="Attach file">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
-            <select class="aip-model-select" id="aip-model-select" title="Model used for Generate Proposal" aria-label="Proposal model">
+            <select class="aip-model-select" id="aip-model-select" title="Model used by n8n for chat, ClickUp, and proposals" aria-label="n8n AI model">
               <option value="claude">Claude</option>
               <option value="chatgpt">ChatGPT</option>
             </select>
@@ -732,19 +552,16 @@ function getPanelHTML() {
       <div class="aip-prop-box">
         <div class="aip-prop-head">
           <span class="aip-prop-title">Winning Proposals <span id="aip-prop-count">(0/10)</span></span>
-          <div class="aip-prop-head-actions">
-            <button class="aip-prop-add" id="aip-prop-add">+ Add</button>
-            <button class="aip-hdr-btn" id="aip-prop-close" title="Close">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-            </button>
-          </div>
+          <button class="aip-hdr-btn" id="aip-prop-close" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
-        <div class="aip-prop-hint">Save your best winning proposals here. When you hit Generate Proposal, the AI reads the job and picks the closest matches as style references. Saved on this device and shared with the toolbar popup.</div>
-        <div class="aip-prop-list" id="aip-prop-list"></div>
-        <div class="aip-prop-empty" id="aip-prop-empty">No winning proposals yet. Click <strong>+ Add</strong> to save your first one.</div>
-        <div class="aip-prop-foot">
-          <button class="aip-prop-save" id="aip-prop-save">Save Proposals</button>
-          <span class="aip-prop-saved" id="aip-prop-saved">✓ Saved</span>
+        <div class="aip-prop-body">
+          <div class="aip-prop-sidebar">
+            <div class="aip-prop-list" id="aip-prop-list"></div>
+            <button class="aip-prop-add" id="aip-prop-add">+ New</button>
+          </div>
+          <div class="aip-prop-editor" id="aip-prop-editor"></div>
         </div>
       </div>
     </div>
@@ -753,19 +570,6 @@ function getPanelHTML() {
 
 function setupPanelEvents() {
   shadow.getElementById("aip-close").addEventListener("click", closeToMicro);
-
-  // Clear current chat = empty active session's messages, keep session in list
-  shadow.getElementById("aip-clear-chat").addEventListener("click", () => {
-    const active = getActiveSession();
-    if (!active) return;
-    active.messages.length = 0;
-    active.title = "New chat";
-    active.updatedAt = Date.now();
-    chatHistory = active.messages;
-    saveSessions();
-    rerenderActiveChat();
-    renderSessionList();
-  });
 
   // History sidebar toggle
   shadow.getElementById("aip-history").addEventListener("click", openSidebar);
@@ -798,7 +602,7 @@ function setupPanelEvents() {
   const histBtn = shadow.getElementById("aip-gen-history");
   if (histBtn) histBtn.addEventListener("click", () => overlaySendMessage({ useClickup: true }));
 
-  // Proposal model picker (Claude / ChatGPT) — remembers the choice, sent to n8n on Generate Proposal
+  // n8n model picker (Claude / ChatGPT) — shared by chat, ClickUp, and proposals.
   const modelSelect = shadow.getElementById("aip-model-select");
   if (modelSelect) {
     chrome.storage.sync.get(["proposalModel"], (r) => {
@@ -820,11 +624,13 @@ function setupPanelEvents() {
   shadow.getElementById("aip-prop-add").addEventListener("click", () => {
     if (overlayProposals.length >= OVERLAY_MAX_PROPOSALS) return;
     overlayProposals.push({ jobPost: "", proposal: "" });
+    overlayPropActive = overlayProposals.length - 1;
     renderProposalsModal();
+    const jobEl = shadow.getElementById("aip-prop-jobtype");
+    if (jobEl) jobEl.focus();
   });
-  shadow.getElementById("aip-prop-save").addEventListener("click", saveProposalsFromModal);
 
-  // New chat (header centered +) — reuse the sidebar new-chat handler
+  // New chat (header + button, in the actions cluster) — reuse the sidebar handler
   const newChatTop = shadow.getElementById("aip-new-chat-top");
   if (newChatTop) newChatTop.addEventListener("click", () => {
     const sidebarNew = shadow.getElementById("aip-new-chat");
@@ -1324,6 +1130,7 @@ function openProposalsModal() {
   // Always load the latest saved set so edits made in the popup show up here too
   chrome.storage.local.get(["winningProposals"], (result) => {
     overlayProposals = Array.isArray(result.winningProposals) ? result.winningProposals : [];
+    overlayPropActive = overlayProposals.length ? 0 : -1;
     renderProposalsModal();
     shadow.getElementById("aip-prop-modal").classList.add("open");
   });
@@ -1333,59 +1140,102 @@ function closeProposalsModal() {
   shadow.getElementById("aip-prop-modal").classList.remove("open");
 }
 
+// Short label for a proposal in the sidebar list (first non-empty line of the
+// job type, else a fallback).
+function proposalTitle(p) {
+  const line = (p.jobPost || "").split("\n").map(s => s.trim()).find(Boolean) || "";
+  if (!line) return "Untitled proposal";
+  return line.length > 34 ? line.slice(0, 34) + "…" : line;
+}
+
 function renderProposalsModal() {
   const list = shadow.getElementById("aip-prop-list");
-  const empty = shadow.getElementById("aip-prop-empty");
+  const editor = shadow.getElementById("aip-prop-editor");
   const count = shadow.getElementById("aip-prop-count");
   const addBtn = shadow.getElementById("aip-prop-add");
+  if (!list || !editor) return;
 
   count.textContent = `(${overlayProposals.length}/${OVERLAY_MAX_PROPOSALS})`;
-  addBtn.disabled = overlayProposals.length >= OVERLAY_MAX_PROPOSALS;
-  empty.style.display = overlayProposals.length === 0 ? "block" : "none";
+  if (addBtn) addBtn.disabled = overlayProposals.length >= OVERLAY_MAX_PROPOSALS;
 
+  // Keep the active index in range.
+  if (overlayPropActive >= overlayProposals.length) overlayPropActive = overlayProposals.length - 1;
+  if (overlayProposals.length === 0) overlayPropActive = -1;
+
+  // --- Sidebar list ---
   list.innerHTML = "";
   overlayProposals.forEach((p, i) => {
-    const card = document.createElement("div");
-    card.className = "aip-prop-card";
-    card.innerHTML = `
-      <div class="aip-prop-card-head">
-        <span class="aip-prop-card-num">Proposal ${i + 1}</span>
-        <button class="aip-prop-del" data-index="${i}">✕ Remove</button>
-      </div>
-      <label class="aip-prop-flabel">Job Post / Job Type</label>
-      <textarea class="aip-prop-ta job" data-index="${i}" data-field="jobPost" placeholder="Paste the job post or describe the job type (e.g. Shopify speed optimization)...">${escHTML(p.jobPost || "")}</textarea>
-      <label class="aip-prop-flabel">Winning Proposal</label>
-      <textarea class="aip-prop-ta body" data-index="${i}" data-field="proposal" placeholder="Paste the proposal you sent that won this job...">${escHTML(p.proposal || "")}</textarea>
-    `;
-    list.appendChild(card);
-  });
-
-  list.querySelectorAll(".aip-prop-ta").forEach(ta => {
-    ta.addEventListener("input", () => {
-      const idx = Number(ta.dataset.index);
-      const field = ta.dataset.field;
-      if (overlayProposals[idx]) overlayProposals[idx][field] = ta.value;
-    });
-  });
-
-  list.querySelectorAll(".aip-prop-del").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const idx = Number(btn.dataset.index);
-      overlayProposals.splice(idx, 1);
+    const item = document.createElement("button");
+    item.className = "aip-prop-item" + (i === overlayPropActive ? " active" : "");
+    item.dataset.index = i;
+    item.innerHTML = `<span class="aip-prop-item-title">${escHTML(proposalTitle(p))}</span>`;
+    item.addEventListener("click", () => {
+      overlayPropActive = i;
       renderProposalsModal();
     });
+    list.appendChild(item);
+  });
+
+  // --- Editor pane ---
+  if (overlayPropActive < 0) {
+    editor.innerHTML = `
+      <div class="aip-prop-editor-empty">
+        <div class="aip-prop-empty-icon">📝</div>
+        <p>No proposal selected.</p>
+        <p class="aip-prop-hint">Click <strong>+ New</strong> to save a winning proposal. When you hit Generate Proposal, the AI picks the closest saved ones as style references. Saved on this device and shared with the popup.</p>
+      </div>`;
+    return;
+  }
+
+  const p = overlayProposals[overlayPropActive];
+  editor.innerHTML = `
+    <label class="aip-prop-flabel">Job Type</label>
+    <input class="aip-prop-input" id="aip-prop-jobtype" placeholder="e.g. Shopify Store Creation" spellcheck="false">
+    <label class="aip-prop-flabel">Winning Proposal</label>
+    <textarea class="aip-prop-ta body" id="aip-prop-bodytext" placeholder="Paste the winning proposal you sent that won this job..."></textarea>
+    <div class="aip-prop-editor-foot">
+      <button class="aip-prop-save" id="aip-prop-save">Save</button>
+      <button class="aip-prop-delete" id="aip-prop-delete" title="Delete this proposal">Delete</button>
+      <span class="aip-prop-saved" id="aip-prop-saved">✓ Saved</span>
+    </div>`;
+
+  const jobEl = shadow.getElementById("aip-prop-jobtype");
+  const bodyEl = shadow.getElementById("aip-prop-bodytext");
+  // Set values via .value (not HTML) so no escaping / injection concerns.
+  jobEl.value = p.jobPost || "";
+  bodyEl.value = p.proposal || "";
+
+  jobEl.addEventListener("input", () => {
+    p.jobPost = jobEl.value;
+    // Live-update this row's label in the sidebar without a full re-render.
+    const titleEl = list.querySelector(`.aip-prop-item[data-index="${overlayPropActive}"] .aip-prop-item-title`);
+    if (titleEl) titleEl.textContent = proposalTitle(p);
+  });
+  bodyEl.addEventListener("input", () => { p.proposal = bodyEl.value; });
+
+  shadow.getElementById("aip-prop-save").addEventListener("click", saveProposalsFromModal);
+  shadow.getElementById("aip-prop-delete").addEventListener("click", () => {
+    overlayProposals.splice(overlayPropActive, 1);
+    if (overlayPropActive >= overlayProposals.length) overlayPropActive = overlayProposals.length - 1;
+    renderProposalsModal();
+    saveProposalsFromModal(); // persist the deletion immediately
   });
 }
 
 function saveProposalsFromModal() {
+  // Drop fully-empty entries, but keep the editor pointed at the same proposal.
+  const activeRef = overlayProposals[overlayPropActive];
   const cleaned = overlayProposals.filter(p => (p.jobPost || "").trim() || (p.proposal || "").trim());
   overlayProposals = cleaned;
+  overlayPropActive = activeRef ? cleaned.indexOf(activeRef) : (cleaned.length ? 0 : -1);
 
   chrome.storage.local.set({ winningProposals: cleaned }, () => {
     renderProposalsModal();
     const saved = shadow.getElementById("aip-prop-saved");
-    saved.classList.add("show");
-    setTimeout(() => saved.classList.remove("show"), 2000);
+    if (saved) {
+      saved.classList.add("show");
+      setTimeout(() => saved.classList.remove("show"), 2000);
+    }
   });
 }
 
@@ -1819,23 +1669,6 @@ function getOverlayCSS() {
       color: var(--text-muted);
       margin-top: 2px;
     }
-    .aip-session-del {
-      width: 24px; height: 24px;
-      background: transparent;
-      border: none;
-      border-radius: 6px;
-      color: var(--text-muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      opacity: 0;
-      transition: opacity 0.12s, background 0.12s, color 0.12s;
-      flex-shrink: 0;
-    }
-    .aip-session-item:hover .aip-session-del { opacity: 1; }
-    .aip-session-del:hover { background: rgba(251,113,133,0.15); color: var(--danger); }
-
     /* ---- Header ---- */
     .aip-header {
       position: relative;
@@ -1848,13 +1681,6 @@ function getOverlayCSS() {
       background: var(--bg-header);
     }
     .aip-header-left { display: flex; align-items: center; gap: 8px; }
-    /* Centered new-chat "+" */
-    .aip-header-newchat {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-    }
     /* Maximize / restore */
     #aip-panel.maximized {
       width: calc(100vw - 40px);
@@ -1862,16 +1688,6 @@ function getOverlayCSS() {
       height: calc(100vh - 40px);
       max-height: none;
     }
-    .aip-logo {
-      width: 26px; height: 26px;
-      background: var(--accent);
-      border-radius: 7px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-    }
-    .aip-title { font-size: 13px; font-weight: 700; color: var(--text); }
     .aip-header-actions { display: flex; gap: 2px; }
     .aip-hdr-btn {
       width: 30px; height: 30px;
@@ -1916,8 +1732,41 @@ function getOverlayCSS() {
     }
     .aip-prop-title { font-size: 14px; font-weight: 700; color: var(--text); }
     #aip-prop-count { color: var(--text-muted); font-weight: 600; font-size: 12px; }
-    .aip-prop-head-actions { display: flex; align-items: center; gap: 8px; }
+
+    /* Two-pane body: proposal list (left) + editor (right) */
+    .aip-prop-body { flex: 1; display: flex; min-height: 0; }
+    .aip-prop-sidebar {
+      width: 136px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .aip-prop-list { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
+    .aip-prop-list::-webkit-scrollbar { width: 4px; }
+    .aip-prop-list::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 4px; }
+    .aip-prop-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 2px;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 12.5px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .aip-prop-item:hover { background: var(--bg-hover); color: var(--text); }
+    .aip-prop-item.active { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+    .aip-prop-item-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .aip-prop-add {
+      margin: 8px;
+      flex-shrink: 0;
       background: var(--amber-soft);
       border: 1px solid var(--amber);
       color: var(--amber);
@@ -1925,66 +1774,26 @@ function getOverlayCSS() {
       font-size: 12px;
       font-weight: 600;
       font-family: inherit;
-      padding: 6px 14px;
+      padding: 8px;
       cursor: pointer;
       transition: opacity 0.15s;
     }
     .aip-prop-add:hover { opacity: 0.82; }
     .aip-prop-add:disabled { opacity: 0.4; cursor: not-allowed; }
-    .aip-prop-hint {
-      font-size: 12px;
-      color: var(--text-muted);
-      line-height: 1.6;
-      padding: 12px 16px 4px;
-      flex-shrink: 0;
-    }
-    .aip-prop-list {
+
+    /* Editor pane */
+    .aip-prop-editor {
       flex: 1;
-      overflow-y: auto;
-      padding: 8px 16px;
-    }
-    .aip-prop-list::-webkit-scrollbar { width: 4px; }
-    .aip-prop-list::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 4px; }
-    .aip-prop-empty {
-      display: none;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 13px;
-      padding: 28px 16px;
-      line-height: 1.6;
-    }
-    .aip-prop-card {
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 12px;
-    }
-    .aip-prop-card-head {
+      min-width: 0;
+      min-height: 0;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 6px;
+      flex-direction: column;
+      padding: 14px 16px;
     }
-    .aip-prop-card-num {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .aip-prop-del {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      font-size: 12px;
-      cursor: pointer;
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-family: inherit;
-      transition: background 0.12s, color 0.12s;
-    }
-    .aip-prop-del:hover { background: rgba(251,113,133,0.15); color: var(--danger); }
+    .aip-prop-editor-empty { margin: auto; text-align: center; color: var(--text-muted); max-width: 260px; }
+    .aip-prop-empty-icon { font-size: 26px; margin-bottom: 6px; }
+    .aip-prop-editor-empty p { margin: 0 0 6px; font-size: 13px; }
+    .aip-prop-hint { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: 8px; }
     .aip-prop-flabel {
       display: block;
       font-size: 10px;
@@ -1992,11 +1801,12 @@ function getOverlayCSS() {
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin: 8px 0 4px;
+      margin: 0 0 5px;
     }
-    .aip-prop-ta {
+    .aip-prop-input {
       width: 100%;
-      padding: 8px 10px;
+      padding: 9px 11px;
+      margin-bottom: 14px;
       background: var(--bg-input);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -2004,19 +1814,29 @@ function getOverlayCSS() {
       font-size: 13px;
       font-family: inherit;
       outline: none;
-      resize: vertical;
-      line-height: 1.5;
+    }
+    .aip-prop-input:focus { border-color: var(--accent); }
+    .aip-prop-ta {
+      width: 100%;
+      padding: 9px 11px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      resize: none;
+      line-height: 1.55;
     }
     .aip-prop-ta:focus { border-color: var(--accent); }
-    .aip-prop-ta.job { min-height: 46px; }
-    .aip-prop-ta.body { min-height: 92px; }
-    .aip-prop-foot {
-      flex-shrink: 0;
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
+    .aip-prop-ta.body { flex: 1; min-height: 120px; }
+    .aip-prop-editor-foot {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      margin-top: 12px;
+      flex-shrink: 0;
     }
     .aip-prop-save {
       flex: 1;
@@ -2032,13 +1852,19 @@ function getOverlayCSS() {
       transition: opacity 0.15s;
     }
     .aip-prop-save:hover { opacity: 0.88; }
-    .aip-prop-saved {
+    .aip-prop-delete {
+      padding: 10px 14px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-muted);
       font-size: 13px;
-      color: var(--success);
-      font-weight: 600;
-      opacity: 0;
-      transition: opacity 0.2s;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
     }
+    .aip-prop-delete:hover { background: rgba(251,113,133,0.12); color: var(--danger); border-color: var(--danger); }
+    .aip-prop-saved { font-size: 13px; color: var(--success); font-weight: 600; opacity: 0; transition: opacity 0.2s; }
     .aip-prop-saved.show { opacity: 1; }
 
     /* ---- Chat area ---- */

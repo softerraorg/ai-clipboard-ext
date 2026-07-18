@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "AI Text Polisher",
   "version": "3.0",
-  "description": "Polish text with shortcuts + floating AI chat on any page.",
-  "permissions": ["contextMenus", "storage", "activeTab", "scripting"],
+  "description": "Floating AI chat, ClickUp answers, and Upwork proposal generator on any page (powered by n8n).",
+  "permissions": ["storage", "activeTab", "scripting"],
   "background": {
     "service_worker": "background.js"
   },
@@ -28,24 +28,6 @@
     "128": "icons/icon128.png"
   },
   "commands": {
-    "auto-polish": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+A"
-      },
-      "description": "Auto-polish selected text"
-    },
-    "formal": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+F"
-      },
-      "description": "Formal tone"
-    },
-    "casual": {
-      "suggested_key": {
-        "default": "Alt+Shift+C"
-      },
-      "description": "Casual tone"
-    },
     "toggle-chat": {
       "suggested_key": {
         "default": "Alt+Shift+O"
