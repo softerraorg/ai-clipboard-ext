@@ -244,6 +244,10 @@ function rerenderActiveChat() {
   }
   for (let i = 0; i < chatHistory.length; i++) {
     const msg = chatHistory[i];
+    if (msg._kind === "proposal-compare") {
+      renderProposalCompare(msg);
+      continue;
+    }
     if (msg.role === "user") {
       const text = msg._displayText !== undefined
         ? msg._displayText
@@ -526,9 +530,10 @@ function getPanelHTML() {
             <button class="aip-attach-btn" id="aip-attach" title="Attach file">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
-            <select class="aip-model-select" id="aip-model-select" title="Model used by n8n for chat, ClickUp, and proposals" aria-label="n8n AI model">
+            <select class="aip-model-select" id="aip-model-select" title="Model for proposals (chat & ClickUp use Claude/ChatGPT; Both = compare)" aria-label="n8n AI model">
               <option value="claude">Claude</option>
               <option value="chatgpt">ChatGPT</option>
+              <option value="both">Both (compare)</option>
             </select>
           </div>
           <div class="aip-input-right">
@@ -1239,23 +1244,43 @@ function saveProposalsFromModal() {
   });
 }
 
+// ============================================================
+// Proposal generation + side-by-side comparison (ChatGPT / Claude / Both)
+// ------------------------------------------------------------
+// A proposal lives in one chatHistory entry:
+//   { role:"assistant", _kind:"proposal-compare", _job, _props:{chatgpt, claude} }
+// _props[model] is null (not generated), a proposal string, or "__error__:msg".
+// Loading is transient UI state passed to the painter, never stored — so cards
+// survive reopen (saveSessions spreads the entry) and Retry / Generate-from
+// still work because _job is persisted.
+// ============================================================
+
+const PROP_LABELS = { chatgpt: "ChatGPT", claude: "Claude" };
+
+function isRealProposal(v) {
+  return typeof v === "string" && v && !v.startsWith("__error__");
+}
+
+// The text handed to the chat model on a later follow-up (so it has context).
+function proposalEntryText(entry) {
+  const parts = [];
+  ["chatgpt", "claude"].forEach((m) => {
+    if (isRealProposal(entry._props[m])) parts.push(`${PROP_LABELS[m]} Proposal:\n${entry._props[m]}`);
+  });
+  return parts.join("\n\n---\n\n");
+}
+
 async function overlayN8nProposal() {
   if (overlayProcessing) return;
 
   const promptEl = shadow.getElementById("aip-prompt");
   const jobDescription = promptEl.value.trim();
-
   if (!jobDescription) {
     addOverlayMsg("Paste the job description in the input box first.", "error");
     return;
   }
 
-  // Show the FULL job (no truncation). Collapse runs of blank lines / repeated
-  // spaces so pre-wrap doesn't render big empty gaps; single line breaks are kept.
-  const jobClean = jobDescription
-    .replace(/[ \t]+/g, " ")   // collapse repeated spaces/tabs
-    .replace(/\n{2,}/g, "\n")  // collapse blank lines into one
-    .trim();
+  const jobClean = jobDescription.replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim();
   const userSummary = "⚡ Generate Proposal\n" + jobClean;
   addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal", histIndex: chatHistory.length });
   chatHistory.push({ role: "user", content: userSummary, _displayText: userSummary, _fullText: jobDescription, _kind: "proposal" });
@@ -1265,49 +1290,148 @@ async function overlayN8nProposal() {
   const emptyState = shadow.getElementById("aip-empty");
   if (emptyState) emptyState.remove();
 
-  const loadingEl = addOverlayLoading();
-  overlayProcessing = true;
-  shadow.getElementById("aip-send").disabled = true;
-
-  // Pull the saved winning proposals so the AI can pick the closest matches
-  const { winningProposals } = await chrome.storage.local.get(["winningProposals"]);
-  const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
-
-  // Which model n8n should use for this proposal (from the composer dropdown)
   const modelSelect = shadow.getElementById("aip-model-select");
-  const model = modelSelect ? modelSelect.value : "claude";
+  const sel = modelSelect ? modelSelect.value : "claude";
+  const models = sel === "both" ? ["chatgpt", "claude"] : [sel === "chatgpt" ? "chatgpt" : "claude"];
 
-  try {
-    const result = await new Promise((resolve, reject) => {
+  const entry = {
+    role: "assistant",
+    content: "",
+    _kind: "proposal-compare",
+    _job: jobDescription,
+    _props: { chatgpt: null, claude: null }
+  };
+  chatHistory.push(entry);
+
+  const block = renderProposalCompare(entry);
+  await runProposalGen(block, entry, models);
+}
+
+// Create the DOM block for a comparison entry and append it to the chat.
+function renderProposalCompare(entry) {
+  const chat = shadow.getElementById("aip-chat");
+  const block = document.createElement("div");
+  block.className = "aip-pc-block";
+  chat.appendChild(block);
+  paintProposalBlock(block, entry, {});
+  chat.scrollTop = chat.scrollHeight;
+  return block;
+}
+
+// Ask n8n (via background) for one model's proposal; store result or error.
+function generateProposalFor(entry, model) {
+  return chrome.storage.local.get(["winningProposals"]).then(({ winningProposals }) => {
+    const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
+    return new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { action: "n8n-proposal", text: jobDescription, winningProposals: savedProposals, model },
+        { action: "n8n-proposal", text: entry._job, winningProposals: savedProposals, model },
         (response) => {
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+            entry._props[model] = "__error__:" + chrome.runtime.lastError.message;
           } else if (response && response.success) {
-            resolve(response.text);
+            entry._props[model] = response.text;
           } else {
-            reject(new Error(response?.error || "Unknown error"));
+            entry._props[model] = "__error__:" + ((response && response.error) || "Unknown error");
           }
+          resolve();
         }
       );
     });
-    loadingEl.remove();
-    addOverlayMsg(result, "ai");
-    chatHistory.push({ role: "assistant", content: result });
-    touchActiveSession();
-    saveSessions();
-    renderSessionList();
-  } catch (error) {
-    loadingEl.remove();
-    addOverlayMsg("Error: " + error.message, "error", { skipSave: true });
-    touchActiveSession();
-    saveSessions();
-    renderSessionList();
-  } finally {
-    overlayProcessing = false;
-    shadow.getElementById("aip-send").disabled = false;
+  });
+}
+
+// Shared loading → generate → repaint → persist flow. Used by initial generate,
+// Retry (same model), and Generate-from-other (the other model).
+async function runProposalGen(block, entry, models) {
+  overlayProcessing = true;
+  const sendBtn = shadow.getElementById("aip-send");
+  if (sendBtn) sendBtn.disabled = true;
+
+  const loading = new Set(models);
+  paintProposalBlock(block, entry, { loading });
+
+  await Promise.allSettled(models.map(async (m) => {
+    await generateProposalFor(entry, m);
+    loading.delete(m);
+    paintProposalBlock(block, entry, { loading, enter: m });
+  }));
+
+  entry.content = proposalEntryText(entry);
+  touchActiveSession();
+  saveSessions();
+  renderSessionList();
+
+  overlayProcessing = false;
+  if (sendBtn) sendBtn.disabled = false;
+}
+
+// Build the 1- or 2-column card layout for an entry. `loading` (a Set of model
+// names) and `enter` (a model to slide-in) are transient view state only.
+function paintProposalBlock(block, entry, opts = {}) {
+  const loading = opts.loading || new Set();
+  const shown = ["chatgpt", "claude"].filter((m) => entry._props[m] !== null || loading.has(m));
+
+  const row = document.createElement("div");
+  row.className = "aip-pc-row" + (shown.length === 2 ? " two" : " one");
+
+  shown.forEach((m) => {
+    const other = m === "chatgpt" ? "claude" : "chatgpt";
+    const val = entry._props[m];
+    const card = document.createElement("div");
+    card.className = "aip-pc-card";
+    if (opts.enter === m) card.classList.add("aip-pc-enter");
+
+    let bodyHTML = "";
+    let toolbarHTML = "";
+    if (loading.has(m)) {
+      bodyHTML = `<div class="aip-pc-loading"><span class="aip-pc-dot"></span><span class="aip-pc-dot"></span><span class="aip-pc-dot"></span>Writing ${PROP_LABELS[m]} proposal…</div>`;
+    } else if (typeof val === "string" && val.startsWith("__error__")) {
+      bodyHTML = `<div class="aip-pc-error">⚠ Couldn't generate. ${escHTML(val.replace("__error__:", ""))}</div>`;
+      toolbarHTML = `<button class="aip-pc-btn" data-act="retry" data-model="${m}">↻ Retry</button>`;
+    } else {
+      bodyHTML = `<div class="aip-pc-body">${renderMD(val)}</div>`;
+      const genOther = (entry._props[other] === null && !loading.has(other))
+        ? `<button class="aip-pc-btn aip-pc-gen" data-act="genother" data-model="${other}">✨ Generate from ${PROP_LABELS[other]}</button>`
+        : "";
+      toolbarHTML =
+        `<button class="aip-pc-btn" data-act="copy" data-model="${m}">📋 Copy</button>` +
+        `<button class="aip-pc-btn" data-act="copyprop" data-model="${m}">📄 Copy Proposal</button>` +
+        `<button class="aip-pc-btn" data-act="retry" data-model="${m}">↻ Retry</button>` +
+        genOther;
+    }
+
+    card.innerHTML =
+      `<div class="aip-pc-head">${PROP_LABELS[m]} Proposal</div>` +
+      `<div class="aip-pc-toolbar">${toolbarHTML}</div>` +
+      bodyHTML;
+    row.appendChild(card);
+  });
+
+  block.innerHTML = "";
+  block.appendChild(row);
+
+  row.querySelectorAll(".aip-pc-btn").forEach((btn) => {
+    btn.addEventListener("click", () => handleProposalAction(block, entry, btn.dataset.act, btn.dataset.model, btn));
+  });
+}
+
+async function handleProposalAction(block, entry, act, model, btn) {
+  if (act === "copy" || act === "copyprop") {
+    const val = entry._props[model];
+    if (!isRealProposal(val)) return;
+    const out = act === "copyprop" ? extractProposal(val) : stripMD(val);
+    try {
+      await navigator.clipboard.writeText(out);
+      const old = btn.innerHTML;
+      btn.innerHTML = "✓ Copied";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.innerHTML = old; btn.classList.remove("copied"); }, 1500);
+    } catch (e) { /* clipboard blocked — ignore */ }
+    return;
   }
+  // retry (this model) or genother (the other model) — both just (re)generate `model`
+  if (overlayProcessing) return;
+  await runProposalGen(block, entry, [model]);
 }
 
 function escHTML(text) {
@@ -2246,6 +2370,47 @@ function getOverlayCSS() {
     }
     .aip-model-select:hover { border-color: var(--accent); color: var(--text); }
     .aip-model-select:focus { border-color: var(--accent); }
+
+    /* ---- Proposal comparison cards (ChatGPT / Claude / Both) ---- */
+    .aip-pc-block { padding: 4px 14px 14px; }
+    .aip-pc-row { display: flex; gap: 10px; align-items: stretch; }
+    .aip-pc-card {
+      flex: 1 1 0;
+      min-width: 0;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+    }
+    .aip-pc-head { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+    .aip-pc-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .aip-pc-btn {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 7px;
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 9px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .aip-pc-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .aip-pc-btn.copied { color: var(--success); border-color: var(--success); }
+    .aip-pc-gen { color: var(--accent); border-color: var(--accent); }
+    .aip-pc-gen:hover { background: var(--accent-soft); color: var(--accent); }
+    .aip-pc-body { font-size: 13px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+    .aip-pc-loading { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; padding: 14px 0; }
+    .aip-pc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); display: inline-block; animation: aip-pc-blink 1.2s infinite; }
+    .aip-pc-dot:nth-child(2) { animation-delay: 0.2s; }
+    .aip-pc-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes aip-pc-blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+    .aip-pc-error { color: var(--danger); font-size: 12px; padding: 8px 0; line-height: 1.5; }
+    .aip-pc-enter { animation: aip-pc-enter 0.32s ease; }
+    @keyframes aip-pc-enter { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
 
     .aip-prompt {
       flex: 1;
