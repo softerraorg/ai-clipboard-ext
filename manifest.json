@@ -33,6 +33,12 @@
         "default": "Alt+Shift+O"
       },
       "description": "Open/close AI Chat overlay"
+    },
+    "toggle-stealth": {
+      "suggested_key": {
+        "default": "Alt+Shift+H"
+      },
+      "description": "Hide/show the extension on ALL pages (for Loom/screen recordings)"
     }
   }
 }

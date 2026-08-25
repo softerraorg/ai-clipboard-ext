@@ -43,6 +43,7 @@ content script / popup builds `messages[]` → `chrome.runtime.sendMessage({acti
 - **[Proposal Chatbot (Postgres) - v3 - n8n Chat Credentials.json](Proposal%20Chatbot%20(Postgres)%20-%20v3%20-%20n8n%20Chat%20Credentials.json)** is the importable workflow export with the `chat` route connected to n8n's model credentials.
 - **[Upwork Proposal Bot (extension-proposals).json](Upwork%20Proposal%20Bot%20(extension-proposals).json)** is the exported n8n workflow.
 - Runtime path: popup/overlay "Generate Proposal" → `background.js` `callN8nProposalBot()` POSTs `{action, chatInput, winningProposals, sessionId}` to the user's `n8nWebhookUrl` → expects `{output|text}` back. Responses containing markers like `PROPOSAL:`, `Hook Options`, `Red Flags` trigger a "Copy Proposal" button that extracts just the proposal body via `extractProposal`/`extractProposalText`.
+- **Loom mode**: the overlay's "Loom Proposal" button calls the same path with `loom: true`, which adds `mode: "loom"` to the webhook payload. The workflow's `Build Prompt` node branches on it and returns a three-section response (`LOOM SCRIPT:` / `EXAMPLES TO SHOW:` / `PROPOSAL:`, in that order — `PROPOSAL:` must stay last for extraction). The result card adds a "Copy Script" button (`extractLoomScript` in content.js); "Copy Proposal" still copies only the short send-with-the-Loom-link message. Loom flag persists on session entries as `_loom` so Retry/Edit regenerate in loom mode.
 
 ## Conventions
 

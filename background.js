@@ -7,14 +7,26 @@
 // chat/proposal requests to the n8n workflow.
 // ============================================================
 
-// Handle the chat-overlay toggle keyboard command (Alt+Shift+O)
+// Keyboard commands:
+//   Alt+Shift+O — toggle the chat overlay on the active tab
+//   Alt+Shift+H — stealth mode: hide/show the extension UI on ALL tabs
+//                 (for Loom / screen recordings). The flag lives in
+//                 chrome.storage.local so every tab reacts via onChanged.
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== "toggle-chat") return;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { action: "toggle-chat-overlay" });
-    }
-  });
+  if (command === "toggle-chat") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: "toggle-chat-overlay" });
+      }
+    });
+    return;
+  }
+
+  if (command === "toggle-stealth") {
+    chrome.storage.local.get("aip_stealth", (r) => {
+      chrome.storage.local.set({ aip_stealth: !(r && r.aip_stealth) });
+    });
+  }
 });
 
 // Message router — chat + proposals, both answered by n8n
@@ -27,7 +39,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "n8n-proposal") {
-    callN8nProposalBot(message.text, message.winningProposals, message.model)
+    callN8nProposalBot(message.text, message.winningProposals, message.model, message.loom)
       .then(result => sendResponse({ success: true, text: result }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
@@ -120,7 +132,11 @@ async function callChatAPI(messages, useClickup = false) {
 }
 
 // n8n Proposal Bot API
-async function callN8nProposalBot(jobDescription, winningProposals, model) {
+// loom=true asks the workflow's Build Prompt node (mode:"loom") for a Loom
+// package: spoken video script + examples to show + short proposal to send
+// with the Loom link. Regular proposals send NO mode field — the workflow's
+// router treats "no mode" and "loom" both as the proposal branch.
+async function callN8nProposalBot(jobDescription, winningProposals, model, loom) {
   const { n8nWebhookUrl, proposalModel } = await chrome.storage.sync.get(["n8nWebhookUrl", "proposalModel"]);
 
   if (!n8nWebhookUrl) {
@@ -132,6 +148,7 @@ async function callN8nProposalBot(jobDescription, winningProposals, model) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: "sendMessage",
+      ...(loom === true ? { mode: "loom" } : {}),
       chatInput: jobDescription,
       winningProposals: Array.isArray(winningProposals) ? winningProposals : [],
       model: model || proposalModel || "claude",

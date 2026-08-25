@@ -38,7 +38,7 @@ let sessions = [];
 let activeSessionId = null;
 let chatHistory = [];
 let currentTheme = "light";
-let launcherHidden = false; // when true, show the tiny micro edge-tab instead of the full launcher
+let stealthMode = false; // Alt+Shift+H — hide the whole extension UI (for screen recordings)
 
 function newSessionId() {
   return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
@@ -252,7 +252,7 @@ function rerenderActiveChat() {
       const text = msg._displayText !== undefined
         ? msg._displayText
         : renderMsgContent(msg.content);
-      addOverlayMsg(text, "user", { skipSave: true, attachments: msg._attachments || [], fullText: msg._fullText, kind: msg._kind, histIndex: i });
+      addOverlayMsg(text, "user", { skipSave: true, attachments: msg._attachments || [], fullText: msg._fullText, kind: msg._kind, loom: msg._loom === true, histIndex: i });
     } else if (msg.role === "assistant") {
       const text = renderMsgContent(msg.content);
       addOverlayMsg(text, "ai", { skipSave: true });
@@ -289,10 +289,71 @@ function closeSidebar() {
   if (sb) sb.classList.remove("open");
 }
 
+// ---- Stealth mode (hide the extension UI for Loom / screen recordings) ----
+
+// Hide or show the entire overlay host. `opts.toast` shows a brief confirmation
+// pill (used for live toggles, skipped when applying the saved state on load).
+function applyStealth(on, opts = {}) {
+  const changed = stealthMode !== !!on;
+  stealthMode = !!on;
+  if (overlayHost) {
+    if (stealthMode) {
+      // Close the panel first so un-hiding brings back just the edge-tab
+      const panel = shadow && shadow.getElementById("aip-panel");
+      if (panel) panel.classList.remove("open");
+      updateLauncherVisibility();
+      overlayHost.style.display = "none";
+    } else {
+      overlayHost.style.display = "";
+      updateLauncherVisibility();
+    }
+  }
+  if (opts.toast && changed) {
+    showStealthToast(stealthMode
+      ? "AI Polisher hidden on all pages · Alt+Shift+H to show again"
+      : "AI Polisher visible again");
+  }
+}
+
+// Tiny self-removing toast. Lives OUTSIDE the overlay host (which may be
+// hidden), fully inline-styled so page CSS can't break it.
+function showStealthToast(msg) {
+  try {
+    const old = document.getElementById("aip-stealth-toast");
+    if (old) old.remove();
+    const t = document.createElement("div");
+    t.id = "aip-stealth-toast";
+    t.textContent = msg;
+    t.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);" +
+      "z-index:2147483647;background:rgba(20,20,28,0.92);color:#fff;" +
+      "font:12px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;" +
+      "padding:8px 16px;border-radius:999px;box-shadow:0 4px 18px rgba(0,0,0,0.35);" +
+      "pointer-events:none;opacity:0;transition:opacity 0.25s ease;";
+    document.body.appendChild(t);
+    requestAnimationFrame(() => { t.style.opacity = "1"; });
+    setTimeout(() => {
+      t.style.opacity = "0";
+      setTimeout(() => t.remove(), 300);
+    }, 2400);
+  } catch (e) { /* ignore */ }
+}
+
+function loadStealth() {
+  try {
+    chrome.storage.local.get("aip_stealth", (r) => {
+      applyStealth(!!(r && r.aip_stealth));
+    });
+  } catch (e) { /* ignore */ }
+}
+
 function setupCrossTabSync() {
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
+      // Stealth toggled (from any tab or the keyboard command) — apply here too
+      if (changes.aip_stealth) {
+        applyStealth(!!changes.aip_stealth.newValue, { toast: true });
+      }
       if (!changes[SESSIONS_KEY]) return;
       const next = changes[SESSIONS_KEY].newValue;
       if (!next || !Array.isArray(next.sessions)) return;
@@ -343,32 +404,11 @@ async function initFloatingUI() {
   style.textContent = getOverlayCSS();
   shadow.appendChild(style);
 
-  // FAB button - minimal pill style like WhisperFlow
-  const fab = document.createElement("button");
-  fab.id = "aip-fab";
-  fab.innerHTML = `
-    <svg class="aip-fab-icon" width="34" height="16" viewBox="0 0 42 20" fill="none" aria-hidden="true">
-      <defs>
-        <filter id="aipDotGlow" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="1.6"/>
-        </filter>
-      </defs>
-      <circle cx="6" cy="10" r="4.4" fill="#3b82f6" opacity="0.5" filter="url(#aipDotGlow)"/>
-      <circle cx="6" cy="10" r="3.4" fill="#93bbfc"/>
-      <path d="M23 3 Q23 10 30 10 Q23 10 23 17 Q23 10 16 10 Q23 10 23 3 Z" fill="#dfe3f5"/>
-      <path d="M33 4 Q33 8.5 37 8.5 Q33 8.5 33 13 Q33 8.5 29 8.5 Q33 8.5 33 4 Z" fill="#cbd1ea"/>
-      <circle cx="36.5" cy="14.5" r="1.6" fill="#b4bcdd"/>
-    </svg>
-  `;
-  fab.title = "AI Chat (Alt+Shift+O)";
-  fab.addEventListener("click", () => togglePanel());
-  shadow.appendChild(fab);
-
-  // Micro launcher — tiny, subtle edge-tab shown only when the full launcher is hidden
+  // Micro launcher — tiny edge-tab, the ONLY launcher (the old bottom-right
+  // FAB pill was removed; this tab is always visible while the panel is closed)
   const micro = document.createElement("button");
   micro.id = "aip-micro";
-  micro.className = "hidden";
-  micro.title = "Open Proposal Bot";
+  micro.title = "Open Proposal Bot (Alt+Shift+O)";
   micro.setAttribute("aria-label", "Open Proposal Bot");
   micro.innerHTML = `
     <span class="aip-micro-glyph"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 Q12 12 22 12 Q12 12 12 22 Q12 12 2 12 Q12 12 12 2 Z"/></svg></span>
@@ -386,7 +426,8 @@ async function initFloatingUI() {
   document.body.appendChild(overlayHost);
 
   setupPanelEvents();
-  loadLauncherHidden();
+  updateLauncherVisibility();
+  loadStealth();
 
   await loadSessionsFromStorage();
   rerenderActiveChat();
@@ -395,24 +436,13 @@ async function initFloatingUI() {
   loadTheme();
 }
 
-// Show the correct launcher for the current state: the full FAB when visible,
-// the tiny micro edge-tab when hidden, and neither while the chat panel is open.
+// The micro edge-tab is the only launcher: visible while the panel is closed,
+// hidden while it's open.
 function updateLauncherVisibility() {
   const panel = shadow.getElementById("aip-panel");
-  const fab = shadow.getElementById("aip-fab");
   const micro = shadow.getElementById("aip-micro");
-  if (!panel || !fab || !micro) return;
-  const panelOpen = panel.classList.contains("open");
-  if (panelOpen) {
-    fab.classList.add("hidden");
-    micro.classList.add("hidden");
-  } else if (launcherHidden) {
-    fab.classList.add("hidden");
-    micro.classList.remove("hidden");
-  } else {
-    fab.classList.remove("hidden");
-    micro.classList.add("hidden");
-  }
+  if (!panel || !micro) return;
+  micro.classList.toggle("hidden", panel.classList.contains("open"));
 }
 
 function togglePanel() {
@@ -428,19 +458,15 @@ function togglePanel() {
   updateLauncherVisibility();
 }
 
-// Close (×) → collapse the full launcher down to the tiny micro edge-tab, and persist it.
+// Close (×) → close the panel; the micro edge-tab reappears.
 function closeToMicro() {
   const panel = shadow.getElementById("aip-panel");
   if (panel) panel.classList.remove("open");
-  launcherHidden = true;
-  saveLauncherHidden();
   updateLauncherVisibility();
 }
 
-// Micro click → restore the full launcher and open the chat.
+// Micro click → open the chat.
 function restoreLauncher() {
-  launcherHidden = false;
-  saveLauncherHidden();
   const panel = shadow.getElementById("aip-panel");
   if (panel && !panel.classList.contains("open")) {
     panel.classList.add("open");
@@ -450,20 +476,13 @@ function restoreLauncher() {
   updateLauncherVisibility();
 }
 
-function saveLauncherHidden() {
-  try { chrome.storage.local.set({ aip_launcher_hidden: launcherHidden }); } catch (e) {}
-}
-function loadLauncherHidden() {
-  try {
-    chrome.storage.local.get("aip_launcher_hidden", (r) => {
-      launcherHidden = !!(r && r.aip_launcher_hidden);
-      updateLauncherVisibility();
-    });
-  } catch (e) {}
-}
-
 function toggleOverlay() {
   if (!overlayHost) initFloatingUI();
+  // Explicitly opening the chat overrides stealth mode (everywhere)
+  if (stealthMode) {
+    applyStealth(false);
+    try { chrome.storage.local.set({ aip_stealth: false }); } catch (e) {}
+  }
   togglePanel();
 }
 
@@ -545,6 +564,10 @@ function getPanelHTML() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               <span>Generate Proposal</span>
             </button>
+            <button class="aip-gen-btn aip-loom-btn" id="aip-gen-loom" title="Generate a Loom video script, examples to show, and a short proposal to send with the Loom link">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="1" y="6" rx="2" ry="2"/></svg>
+              <span>Loom Proposal</span>
+            </button>
             <button class="aip-send-btn" id="aip-send" title="Send">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -621,6 +644,11 @@ function setupPanelEvents() {
   // Generate Proposal (n8n)
   shadow.getElementById("aip-gen-proposal").addEventListener("click", () => {
     overlayN8nProposal();
+  });
+
+  // Loom Proposal (n8n, mode:"loom") — script + examples to show + short proposal
+  shadow.getElementById("aip-gen-loom").addEventListener("click", () => {
+    overlayN8nProposal({ loom: true });
   });
 
   // Winning Proposals manager
@@ -935,6 +963,7 @@ function addOverlayMsg(text, type, opts = {}) {
     // Use the full text (for proposals the bubble only shows a short preview)
     const fullText = (opts.fullText !== undefined && opts.fullText !== null) ? opts.fullText : text;
     const isProposal = opts.kind === "proposal";
+    const isLoom = opts.loom === true;
     const setInput = (val) => {
       const input = shadow.getElementById("aip-prompt");
       input.value = val;
@@ -953,14 +982,14 @@ function addOverlayMsg(text, type, opts = {}) {
     });
 
     div.querySelector(".aip-u-edit").addEventListener("click", () => {
-      enterEditMode(div, fullText, isProposal, opts.histIndex);
+      enterEditMode(div, fullText, isProposal, opts.histIndex, isLoom);
     });
 
     div.querySelector(".aip-u-retry").addEventListener("click", () => {
       if (overlayProcessing) return;
       setInput(fullText);
       if (isProposal) {
-        overlayN8nProposal();
+        overlayN8nProposal(isLoom ? { loom: true } : {});
       } else {
         overlaySendMessage();
       }
@@ -1065,7 +1094,7 @@ async function retryOverlayMsg(userMessage) {
 }
 
 // ---- Inline edit of a sent message (Claude-style) ----
-function enterEditMode(wrapDiv, fullText, isProposal, histIndex) {
+function enterEditMode(wrapDiv, fullText, isProposal, histIndex, isLoom) {
   if (overlayProcessing) return;
 
   // If we don't know the message's position, fall back to loading it into the input
@@ -1107,11 +1136,11 @@ function enterEditMode(wrapDiv, fullText, isProposal, histIndex) {
   bubble.querySelector(".aip-edit-save").addEventListener("click", () => {
     const newText = ta.value.trim();
     if (!newText) return;
-    saveEdit(histIndex, newText, isProposal);
+    saveEdit(histIndex, newText, isProposal, isLoom);
   });
 }
 
-function saveEdit(histIndex, newText, isProposal) {
+function saveEdit(histIndex, newText, isProposal, isLoom) {
   if (overlayProcessing) return;
   // Drop the edited message and everything after it, then regenerate
   chatHistory.length = Math.max(0, histIndex);
@@ -1124,7 +1153,7 @@ function saveEdit(histIndex, newText, isProposal) {
   rerenderActiveChat();
 
   if (isProposal) {
-    overlayN8nProposal();
+    overlayN8nProposal(isLoom ? { loom: true } : {});
   } else {
     overlaySendMessage();
   }
@@ -1270,8 +1299,9 @@ function proposalEntryText(entry) {
   return parts.join("\n\n---\n\n");
 }
 
-async function overlayN8nProposal() {
+async function overlayN8nProposal(genOpts = {}) {
   if (overlayProcessing) return;
+  const isLoom = genOpts.loom === true;
 
   const promptEl = shadow.getElementById("aip-prompt");
   const jobDescription = promptEl.value.trim();
@@ -1281,9 +1311,9 @@ async function overlayN8nProposal() {
   }
 
   const jobClean = jobDescription.replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim();
-  const userSummary = "⚡ Generate Proposal\n" + jobClean;
-  addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal", histIndex: chatHistory.length });
-  chatHistory.push({ role: "user", content: userSummary, _displayText: userSummary, _fullText: jobDescription, _kind: "proposal" });
+  const userSummary = (isLoom ? "🎥 Loom Proposal\n" : "⚡ Generate Proposal\n") + jobClean;
+  addOverlayMsg(userSummary, "user", { fullText: jobDescription, kind: "proposal", loom: isLoom, histIndex: chatHistory.length });
+  chatHistory.push({ role: "user", content: userSummary, _displayText: userSummary, _fullText: jobDescription, _kind: "proposal", _loom: isLoom });
   promptEl.value = "";
   promptEl.style.height = "auto";
 
@@ -1298,6 +1328,7 @@ async function overlayN8nProposal() {
     role: "assistant",
     content: "",
     _kind: "proposal-compare",
+    _loom: isLoom,
     _job: jobDescription,
     _props: { chatgpt: null, claude: null }
   };
@@ -1324,7 +1355,7 @@ function generateProposalFor(entry, model) {
     const savedProposals = Array.isArray(winningProposals) ? winningProposals : [];
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { action: "n8n-proposal", text: entry._job, winningProposals: savedProposals, model },
+        { action: "n8n-proposal", text: entry._job, winningProposals: savedProposals, model, loom: entry._loom === true },
         (response) => {
           if (chrome.runtime.lastError) {
             entry._props[model] = "__error__:" + chrome.runtime.lastError.message;
@@ -1393,15 +1424,19 @@ function paintProposalBlock(block, entry, opts = {}) {
       const genOther = (entry._props[other] === null && !loading.has(other))
         ? `<button class="aip-pc-btn aip-pc-gen" data-act="genother" data-model="${other}">✨ Generate from ${PROP_LABELS[other]}</button>`
         : "";
+      const scriptBtn = entry._loom
+        ? `<button class="aip-pc-btn" data-act="copyscript" data-model="${m}">🎬 Copy Script</button>`
+        : "";
       toolbarHTML =
         `<button class="aip-pc-btn" data-act="copy" data-model="${m}">📋 Copy</button>` +
+        scriptBtn +
         `<button class="aip-pc-btn" data-act="copyprop" data-model="${m}">📄 Copy Proposal</button>` +
         `<button class="aip-pc-btn" data-act="retry" data-model="${m}">↻ Retry</button>` +
         genOther;
     }
 
     card.innerHTML =
-      `<div class="aip-pc-head">${PROP_LABELS[m]} Proposal</div>` +
+      `<div class="aip-pc-head">${PROP_LABELS[m]} ${entry._loom ? "Loom Package" : "Proposal"}</div>` +
       `<div class="aip-pc-toolbar">${toolbarHTML}</div>` +
       bodyHTML;
     row.appendChild(card);
@@ -1416,10 +1451,12 @@ function paintProposalBlock(block, entry, opts = {}) {
 }
 
 async function handleProposalAction(block, entry, act, model, btn) {
-  if (act === "copy" || act === "copyprop") {
+  if (act === "copy" || act === "copyprop" || act === "copyscript") {
     const val = entry._props[model];
     if (!isRealProposal(val)) return;
-    const out = act === "copyprop" ? extractProposal(val) : stripMD(val);
+    const out = act === "copyprop" ? extractProposal(val)
+      : act === "copyscript" ? extractLoomScript(val)
+      : stripMD(val);
     try {
       await navigator.clipboard.writeText(out);
       const old = btn.innerHTML;
@@ -1467,23 +1504,50 @@ function extractProposal(text) {
     /\nADDITIONAL NOTES:?\s*$/mi,
     /\nHook Options:?\s*$/mi,
     /\n\*?\*?Hook Options\*?\*?:?/i,
+    /\n\*?\*?Opening Question Options\*?\*?:?/i,
     /\n\*?\*?Red Flags?\*?\*?:?/i,
     /\n\*?\*?Suggested Price/i,
     /\n\*?\*?Why (these|those) portfolio/i,
+    /\n\*?\*?LOOM SCRIPT\*?\*?:?/i,
+    /\n\*?\*?EXAMPLES TO SHOW\*?\*?:?/i,
   ];
 
+  // Cut at the EARLIEST matching section header, not the first pattern that hits
+  let cutAt = -1;
   for (const pattern of cutPatterns) {
     const match = proposal.search(pattern);
-    if (match !== -1) {
-      proposal = proposal.substring(0, match).trim();
-      break;
-    }
+    if (match !== -1 && (cutAt === -1 || match < cutAt)) cutAt = match;
   }
+  if (cutAt !== -1) proposal = proposal.substring(0, cutAt).trim();
 
   if (proposal.startsWith('---')) proposal = proposal.substring(3).trim();
   if (proposal.endsWith('---')) proposal = proposal.substring(0, proposal.length - 3).trim();
 
   return stripMD(proposal);
+}
+
+// Pull just the spoken script out of a Loom package response
+// (LOOM SCRIPT: ... / EXAMPLES TO SHOW: ... / PROPOSAL: ...).
+function extractLoomScript(text) {
+  let script = text;
+
+  const start = script.search(/^#{0,4}\s*\*{0,2}LOOM SCRIPT\*{0,2}:?\s*$/mi);
+  if (start !== -1) {
+    script = script.substring(start).replace(/^#{0,4}\s*\*{0,2}LOOM SCRIPT\*{0,2}:?\s*/i, '').trim();
+  }
+
+  const endPatterns = [
+    /\n#{0,4}\s*\*{0,2}EXAMPLES TO SHOW\*{0,2}:?/i,
+    /\n#{0,4}\s*\*{0,2}PROPOSAL\*{0,2}:?/i,
+  ];
+  let cutAt = -1;
+  for (const pattern of endPatterns) {
+    const match = script.search(pattern);
+    if (match !== -1 && (cutAt === -1 || match < cutAt)) cutAt = match;
+  }
+  if (cutAt !== -1) script = script.substring(0, cutAt).trim();
+
+  return stripMD(script);
 }
 
 function renderMD(text) {
@@ -1519,7 +1583,7 @@ function renderMD(text) {
 }
 
 // ============================================================
-// 4. FAB is fixed bottom-right (drag removed — see CSS #aip-fab position:fixed)
+// 4. Launcher is the micro edge-tab, fixed to the right edge (see CSS #aip-micro)
 // ============================================================
 
 // ============================================================
@@ -1580,36 +1644,7 @@ function getOverlayCSS() {
     #aip-panel[data-theme="dark"] .aip-icon-sun  { display: block; }
     #aip-panel[data-theme="dark"] .aip-icon-moon { display: none; }
 
-    /* ---- FAB ---- */
-    #aip-fab {
-      position: fixed;
-      bottom: 28px;
-      right: 28px;
-      z-index: 2147483646;
-      height: 38px;
-      min-width: 38px;
-      padding: 0 12px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(20,20,28,0.55);
-      backdrop-filter: blur(14px) saturate(160%);
-      -webkit-backdrop-filter: blur(14px) saturate(160%);
-      color: rgba(255,255,255,0.85);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
-      transition: background 0.18s, border-color 0.18s, transform 0.18s, opacity 0.18s;
-      user-select: none;
-    }
-    #aip-fab .aip-fab-icon { opacity: 0.9; flex-shrink: 0; }
-    #aip-fab:hover { background: rgba(28,28,40,0.75); border-color: rgba(255,255,255,0.22); transform: translateY(-1px); }
-    #aip-fab:active { transform: translateY(0); }
-    #aip-fab.hidden { opacity: 0; pointer-events: none; transform: scale(0.85); }
-
-    /* ---- Micro launcher (tiny edge-tab shown when the full launcher is hidden) ---- */
+    /* ---- Micro launcher (tiny edge-tab, the only launcher) ---- */
     #aip-micro {
       position: fixed;
       right: 4px;
@@ -2510,6 +2545,14 @@ function getOverlayCSS() {
     .aip-gen-btn:hover { background: var(--accent); color: #fff; }
     .aip-gen-btn:active { transform: scale(0.97); }
     .aip-gen-btn svg { flex-shrink: 0; }
+
+    /* Loom Proposal pill — Loom purple so it reads as a different action */
+    .aip-loom-btn {
+      background: rgba(98, 93, 245, 0.12);
+      border-color: #625df5;
+      color: #625df5;
+    }
+    .aip-loom-btn:hover { background: #625df5; color: #fff; }
 
     /* "Generate from History" pill (was the ClickUp toggle) */
     .aip-hist-btn {
